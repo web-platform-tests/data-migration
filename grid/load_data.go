@@ -28,7 +28,7 @@ func init() {
 }
 
 func getRuns(ctx context.Context, client *datastore.Client) ([]*datastore.Key, []shared.TestRun) {
-	query := datastore.NewQuery("TestRun").Order("CreatedAt").Limit(2)
+	query := datastore.NewQuery("TestRun").Order("CreatedAt").Limit(5)
 	keys := make([]*datastore.Key, 0)
 	testRuns := make([]shared.TestRun, 0)
 	it := client.Run(ctx, query)
