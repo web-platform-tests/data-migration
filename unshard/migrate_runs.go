@@ -28,7 +28,7 @@ import (
 	"google.golang.org/api/option"
 	billy "gopkg.in/src-d/go-billy.v4"
 	"gopkg.in/src-d/go-billy.v4/osfs"
-	"gopkg.in/src-d/go-git.v4"
+	git "gopkg.in/src-d/go-git.v4"
 	"gopkg.in/src-d/go-git.v4/storage"
 	"gopkg.in/src-d/go-git.v4/storage/filesystem"
 )
@@ -266,8 +266,11 @@ func main() {
 				log.Printf("Skipping run for unknown revision: %v", testRun)
 				continue
 			}
-			bucketDir := fmt.Sprintf("%s/%s_%s_%s_%s", hash, testRun.BrowserName, testRun.BrowserVersion, testRun.OSName, testRun.OSVersion)
-			remoteLogPath := bucketDir + "/migration.log"
+			productID := fmt.Sprintf("%s-%s-%s", testRun.BrowserVersion, testRun.OSName)
+			if testRun.OSVersion != "" {
+				productID += "-" + testRun.OSVersion
+			}
+			bucketDir := fmt.Sprintf("%s/%s", hash, productID)
 			remoteReportPath := bucketDir + "/report.json"
 			rawResultsURL := fmt.Sprintf("https://storage.googleapis.com/%s/%s", *outputGcsBucket, remoteReportPath)
 
@@ -321,7 +324,15 @@ func main() {
 				for _, rr := range runResults {
 					results = append(results, rr.Res)
 				}
-				report := metrics.TestResultsReport{results}
+				report := metrics.TestResultsReport{
+					Results: results,
+					RunInfo: metrics.TestResultsReport{
+						Product:        testRun.BrowserName,
+						BrowserVersion: testRun.BrowserVersion,
+						OS:             testRun.OSName,
+						OSVersion:      testRun.OSVersion,
+					},
+				}
 
 				log.Printf("Writing consolidated results to %s/%s", *outputGcsBucket, remoteReportPath)
 				if err = writeJSON(ctx, outputBucket, remoteReportPath, report); err != nil {
@@ -331,25 +342,6 @@ func main() {
 				}
 
 				log.SetOutput(os.Stdout)
-			}
-
-			// Re-open local log file for streaming to GCS.
-			log.Printf("Opening %s for reading", localLogFileName)
-			logFile, err = os.OpenFile(localLogFileName, os.O_RDONLY, 0666)
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			// Stream log file to GCS.
-			{
-				defer logFile.Close()
-				log.Printf("Streaming %s to GCS object: %s", localLogFileName, remoteLogPath)
-				if err := streamData(ctx, outputBucket, remoteLogPath, logFile); err != nil {
-					log.Printf("Error streaming log to Google Cloud Storage: %v\n", err)
-				}
-				if err := logFile.Close(); err != nil {
-					log.Fatal(err)
-				}
 			}
 
 			// Update TestRun in Datastore.
