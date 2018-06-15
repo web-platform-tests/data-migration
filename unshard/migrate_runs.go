@@ -326,11 +326,8 @@ func main() {
 				}
 				report := metrics.TestResultsReport{
 					Results: results,
-					RunInfo: metrics.TestResultsReport{
-						Product:        testRun.BrowserName,
-						BrowserVersion: testRun.BrowserVersion,
-						OS:             testRun.OSName,
-						OSVersion:      testRun.OSVersion,
+					RunInfo: metrics.RunInfo{
+						ProductAtRevision: testRun.ProductAtRevision,
 					},
 				}
 
