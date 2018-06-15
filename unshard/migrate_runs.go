@@ -57,11 +57,11 @@ func init() {
 	gcpCredentialsFile = flag.String("gcp_credentials_file", "client-secret.json", "Path to credentials file for authenticating against Google Cloud Platform services")
 }
 
-func getRuns(ctx wptStorage.GCSDatastoreContext) ([]*datastore.Key, []shared.TestRun) {
+func getRuns(ctx context.Context, client *datastore.Client) ([]*datastore.Key, []shared.TestRun) {
 	query := datastore.NewQuery("TestRun").Order("-CreatedAt")
 	keys := make([]*datastore.Key, 0)
 	testRuns := make([]shared.TestRun, 0)
-	it := ctx.Client.Run(ctx.Context, query)
+	it := client.Run(ctx, query)
 	for {
 		var testRun shared.TestRun
 		key, err := it.Next(&testRun)
@@ -120,14 +120,14 @@ func getHashForRun(run shared.TestRun) (string, error) {
 	return strings.Trim(str, " \t\r\n\v"), nil
 }
 
-func getRunsAndSetupGit(ctx wptStorage.GCSDatastoreContext) ([]*datastore.Key, []shared.TestRun) {
+func getRunsAndSetupGit(ctx context.Context, client *datastore.Client) ([]*datastore.Key, []shared.TestRun) {
 	var wg sync.WaitGroup
 	var keys []*datastore.Key
 	var runs []shared.TestRun
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		keys, runs = getRuns(ctx)
+		keys, runs = getRuns(ctx, client)
 	}()
 	go func() {
 		defer wg.Done()
@@ -246,20 +246,17 @@ func main() {
 	}
 	inputBucket := storageClient.Bucket(*inputGcsBucket)
 
-	remoteCtx := wptStorage.GCSDatastoreContext{
-		ctx,
-		wptStorage.Bucket{
-			*inputGcsBucket,
-			inputBucket,
-		},
-		datastoreClient,
-	}
+	var loader wptStorage.Loader
+	loader = wptStorage.NewShardedGCSDatastoreContext(ctx, wptStorage.Bucket{
+		*inputGcsBucket,
+		inputBucket,
+	}, datastoreClient)
 
 	// Forever: Reload wpt revisions and runs; skip handled runs; handle one run;
 	// repeat.
 	for {
 		log.Printf("Loading runs from Datastore and initializing local web-platform-tests checkout")
-		datastoreKeys, testRuns := getRunsAndSetupGit(remoteCtx)
+		datastoreKeys, testRuns := getRunsAndSetupGit(ctx, datastoreClient)
 		outputBucket := storageClient.Bucket(*outputGcsBucket)
 
 		for i, testRun := range testRuns {
@@ -304,8 +301,21 @@ func main() {
 				log.Printf("Logging to %s", localLogFileName)
 				log.SetOutput(logFile)
 
-				log.Printf("Loading results from %s for %v", remoteCtx.Bucket.Name, testRun)
-				runResults := wptStorage.LoadTestRunResults(&remoteCtx, []shared.TestRun{testRun}, nil, false)
+				log.Printf("Loading results from %s for %v", *inputGcsBucket, testRun)
+				runResults, err := loader.LoadTestRunResults([]metrics.TestRunLegacy{
+					metrics.TestRunLegacy{
+						ID:                testRun.ID,
+						ProductAtRevision: testRun.ProductAtRevision,
+						ResultsURL:        testRun.ResultsURL,
+						CreatedAt:         testRun.CreatedAt,
+						RawResultsURL:     testRun.RawResultsURL,
+					},
+				}, false)
+				if err != nil {
+					log.Printf("Error loading results for %v from Google Cloud Storage: %v\n", testRun, err)
+					log.SetOutput(os.Stdout)
+					log.Fatal(err)
+				}
 				log.Printf("Consolidating metrics for %v", testRun)
 				results := make([]*metrics.TestResults, 0, len(runResults))
 				for _, rr := range runResults {
