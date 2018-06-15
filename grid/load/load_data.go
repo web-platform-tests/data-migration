@@ -11,6 +11,7 @@ import (
 	"strconv"
 
 	"cloud.google.com/go/datastore"
+	"github.com/web-platform-tests/data-migration/grid"
 	"github.com/web-platform-tests/results-analysis/metrics"
 	"github.com/web-platform-tests/wpt.fyi/shared"
 	"google.golang.org/api/iterator"
@@ -28,7 +29,10 @@ func init() {
 }
 
 func getRuns(ctx context.Context, client *datastore.Client) ([]*datastore.Key, []shared.TestRun) {
-	query := datastore.NewQuery("TestRun").Order("CreatedAt").Limit(5)
+	log.SetFlags(log.LstdFlags | log.Llongfile | log.LUTC)
+	flag.Parse()
+
+	query := datastore.NewQuery("TestRun").Order("CreatedAt")
 	keys := make([]*datastore.Key, 0)
 	testRuns := make([]shared.TestRun, 0)
 	it := client.Run(ctx, query)
@@ -47,17 +51,6 @@ func getRuns(ctx context.Context, client *datastore.Client) ([]*datastore.Key, [
 	return keys, testRuns
 }
 
-type Run struct {
-	ID int `json:"id"`
-	shared.TestRun
-}
-
-type Test struct {
-	ID      int    `json:"id"`
-	Test    string `json:"test"`
-	Subtest string `json:"subtest,omitempty"`
-}
-
 func main() {
 	ctx := context.Background()
 	client, err := datastore.NewClient(ctx, *projectID, option.WithCredentialsFile(*gcpCredentialsFile))
@@ -67,14 +60,14 @@ func main() {
 	nextRunID := 0
 	nextTestID := 0
 	testMap := make(map[string]int)
-	runSlice := make([]Run, 0)
-	testSlice := make([]Test, 0)
+	runSlice := make([]grid.Run, 0)
+	testSlice := make([]grid.Test, 0)
 	testsToRuns := make(map[string]map[string]metrics.CompleteTestStatus)
 	runsToTests := make(map[string]map[string]metrics.CompleteTestStatus)
 	_, runs := getRuns(ctx, client)
 	for _, run := range runs {
 		runID := strconv.Itoa(nextRunID)
-		runSlice = append(runSlice, Run{
+		runSlice = append(runSlice, grid.Run{
 			ID:      nextRunID,
 			TestRun: run,
 		})
@@ -103,7 +96,7 @@ func main() {
 			baseName := res.Test
 			if _, ok := testMap[baseName]; !ok {
 				testMap[baseName] = nextTestID
-				testSlice = append(testSlice, Test{
+				testSlice = append(testSlice, grid.Test{
 					ID:   nextTestID,
 					Test: res.Test,
 				})
@@ -125,7 +118,7 @@ func main() {
 				subName := baseName + ":" + sub.Name
 				if _, ok := testMap[subName]; !ok {
 					testMap[subName] = nextTestID
-					testSlice = append(testSlice, Test{
+					testSlice = append(testSlice, grid.Test{
 						ID:      nextTestID,
 						Test:    res.Test,
 						Subtest: sub.Name,
