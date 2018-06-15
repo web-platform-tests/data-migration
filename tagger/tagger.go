@@ -24,21 +24,29 @@ func (e conditionUnsatisfied) Error() string {
 }
 
 func condition(run *shared.TestRun) bool {
-	if strings.HasSuffix(run.BrowserName, "-experimental") || !shared.IsBrowserName(run.BrowserName) {
+	if !shared.IsBrowserName(run.BrowserName) {
 		return false
 	}
+	if strings.HasSuffix(run.BrowserName, "-experimental") {
+		return true
+	}
+	if strings.HasSuffix(run.BrowserVersion, " dev") || strings.HasSuffix(run.BrowserVersion, "a1") {
+		return true
+	}
+	return false
+}
+
+func operation(tx *datastore.Transaction, key *datastore.Key, run *shared.TestRun) error {
 	labels := mapset.NewSet()
 	for _, label := range run.Labels {
 		labels.Add(label)
 	}
-	if labels.Contains("experimental") || labels.Contains("stable") {
-		return false
+	labels.Add("experimental")
+	labels.Remove("stable")
+	run.Labels = nil
+	for label := range labels.Iter() {
+		run.Labels = append(run.Labels, label.(string))
 	}
-	return true
-}
-
-func operation(tx *datastore.Transaction, key *datastore.Key, run *shared.TestRun) error {
-	run.Labels = append(run.Labels, "stable")
 	_, err := tx.Put(key, run)
 	return err
 }
@@ -82,6 +90,6 @@ func main() {
 				continue
 			}
 		}
-		fmt.Printf("Proccessed TestRun %s (%s)\n", key.String(), run.BrowserName)
+		fmt.Printf("Proccessed TestRun %s (%s %s)\n", key.String(), run.BrowserName, run.BrowserVersion)
 	}
 }
