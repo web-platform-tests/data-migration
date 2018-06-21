@@ -225,6 +225,7 @@ func streamData(ctx context.Context, bucket *gcs.BucketHandle, path string, read
 }
 
 func main() {
+	flag.Parse()
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
 	log.Printf("Loading and storing WPT checkout in %s", *wptGitPath)
@@ -235,12 +236,19 @@ func main() {
 	}
 
 	ctx := context.Background()
-	datastoreClient, err := datastore.NewClient(ctx, *projectID, option.WithCredentialsFile(*gcpCredentialsFile))
+	var gcOpts []option.ClientOption
+	if _, err = os.Stat(*gcpCredentialsFile); err != nil {
+		log.Printf("%s not found; using application default creds", *gcpCredentialsFile)
+	} else {
+		gcOpts = append(gcOpts, option.WithCredentialsFile(*gcpCredentialsFile))
+	}
+
+	datastoreClient, err := datastore.NewClient(ctx, *projectID, gcOpts...)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	storageClient, err := gcs.NewClient(ctx, option.WithCredentialsFile(*gcpCredentialsFile))
+	storageClient, err := gcs.NewClient(ctx, gcOpts...)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -248,8 +256,8 @@ func main() {
 
 	var loader wptStorage.Loader
 	loader = wptStorage.NewShardedGCSDatastoreContext(ctx, wptStorage.Bucket{
-		*inputGcsBucket,
-		inputBucket,
+		Name:   *inputGcsBucket,
+		Handle: inputBucket,
 	}, datastoreClient)
 
 	// Forever: Reload wpt revisions and runs; skip handled runs; handle one run;
@@ -266,7 +274,7 @@ func main() {
 				log.Printf("Skipping run for unknown revision: %v", testRun)
 				continue
 			}
-			productID := fmt.Sprintf("%s-%s-%s", testRun.BrowserVersion, testRun.OSName)
+			productID := fmt.Sprintf("%s-%s-%s", testRun.BrowserName, testRun.BrowserVersion, testRun.OSName)
 			if testRun.OSVersion != "" {
 				productID += "-" + testRun.OSVersion
 			}
