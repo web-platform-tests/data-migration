@@ -33,6 +33,7 @@ import (
 	"gopkg.in/src-d/go-git.v4/storage/filesystem"
 )
 
+var skipGitPull *bool
 var wptGitPath *string
 var wptDataPath *string
 var projectID *string
@@ -55,6 +56,7 @@ func init() {
 	outputGcsBucket = flag.String("output_gcs_bucket", "wptd-results", "Google Cloud Storage bucket where unified test results are stored")
 	wptdHost = flag.String("wptd_host", "wpt.fyi", "Hostname of endpoint that serves WPT Dashboard data API")
 	gcpCredentialsFile = flag.String("gcp_credentials_file", "client-secret.json", "Path to credentials file for authenticating against Google Cloud Platform services")
+	skipGitPull = flag.Bool("skip_git_pull", false, "Skip updating the local WPT git checkout")
 }
 
 func getRuns(ctx context.Context, client *datastore.Client) ([]*datastore.Key, []shared.TestRun) {
@@ -92,6 +94,10 @@ func getGit(s storage.Storer, fs billy.Filesystem, o *git.CloneOptions) *git.Rep
 	wt, err := repo.Worktree()
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	if *skipGitPull {
+		return repo
 	}
 
 	for {
@@ -137,7 +143,7 @@ func getRunsAndSetupGit(ctx context.Context, client *datastore.Client) ([]*datas
 			log.Fatal(err)
 		}
 		getGit(store, fs, &git.CloneOptions{
-			URL: "https://github.com/w3c/web-platform-tests.git",
+			URL: "https://github.com/web-platform-tests/wpt.git",
 		})
 	}()
 	wg.Wait()
@@ -293,25 +299,13 @@ func main() {
 						log.Fatal(err)
 					}
 				}
-				log.Printf("Skipping revision: Found log file for revision: %v", testRun)
+				log.Printf("Skipping run: Found RawResultsURL for TestRun %v", testRun)
 				continue
-			}
-
-			// Create local log file for this run.
-			localLogFileName := fmt.Sprintf("%s_%s_%s_%s_%s_migration.log", hash, testRun.BrowserName, testRun.BrowserVersion, testRun.OSName, testRun.OSVersion)
-			log.Printf("Opening local run-specific log file %s", localLogFileName)
-			logFile, err := os.OpenFile(localLogFileName, os.O_CREATE|os.O_WRONLY, 0666)
-			if err != nil {
-				log.Fatal(err)
 			}
 
 			// Download sharded run, consolidate it, upload consolidated run.
 			{
-				defer logFile.Close()
 				log.Printf("Downloading, consolidating, and uploading %v", testRun)
-				log.Printf("Logging to %s", localLogFileName)
-				log.SetOutput(logFile)
-
 				log.Printf("Loading results from %s for %v", *inputGcsBucket, testRun)
 				runResults, err := loader.LoadTestRunResults([]metrics.TestRunLegacy{
 					metrics.TestRunLegacy{
@@ -321,13 +315,12 @@ func main() {
 						CreatedAt:         testRun.CreatedAt,
 						RawResultsURL:     testRun.RawResultsURL,
 					},
-				}, false)
+				}, true)
 				if err != nil {
 					log.Printf("Error loading results for %v from Google Cloud Storage: %v\n", testRun, err)
-					log.SetOutput(os.Stdout)
 					log.Fatal(err)
 				}
-				log.Printf("Consolidating metrics for %v", testRun)
+				log.Printf("Consolidating results for %v", testRun)
 				results := make([]*metrics.TestResults, 0, len(runResults))
 				for _, rr := range runResults {
 					results = append(results, rr.Res)
@@ -344,11 +337,8 @@ func main() {
 				log.Printf("Writing consolidated results to %s/%s", *outputGcsBucket, remoteReportPath)
 				if err = writeJSON(ctx, outputBucket, remoteReportPath, report); err != nil {
 					log.Printf("Error writing %s to Google Cloud Storage: %v\n", remoteReportPath, err)
-					log.SetOutput(os.Stdout)
 					log.Fatal(err)
 				}
-
-				log.SetOutput(os.Stdout)
 			}
 
 			// Update TestRun in Datastore.
@@ -363,6 +353,7 @@ func main() {
 			}
 
 			// Wait a minute to avoid being throttled by GCS.
+			log.Printf("Done. Sleeping a minute...")
 			time.Sleep(time.Minute)
 
 			// Jump to outer loop to reload latest revisions and test runs that may
