@@ -275,7 +275,7 @@ func main() {
 				continue
 			}
 			productID := fmt.Sprintf("%s-%s-%s", testRun.BrowserName, testRun.BrowserVersion, testRun.OSName)
-			if testRun.OSVersion != "" {
+			if testRun.OSVersion != "" && testRun.OSVersion != "*" {
 				productID += "-" + testRun.OSVersion
 			}
 			bucketDir := fmt.Sprintf("%s/%s", hash, productID)
@@ -338,6 +338,8 @@ func main() {
 						ProductAtRevision: testRun.ProductAtRevision,
 					},
 				}
+				// Legacy runs don't have FullRevisionHash in Datastore.
+				report.RunInfo.FullRevisionHash = hash
 
 				log.Printf("Writing consolidated results to %s/%s", *outputGcsBucket, remoteReportPath)
 				if err = writeJSON(ctx, outputBucket, remoteReportPath, report); err != nil {
