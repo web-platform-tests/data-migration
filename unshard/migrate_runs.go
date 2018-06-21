@@ -341,7 +341,7 @@ func main() {
 				// Legacy runs don't have FullRevisionHash in Datastore.
 				report.RunInfo.FullRevisionHash = hash
 				// Trim the experimental suffix.
-				report.RunInfo.BrowserName = strings.TrimSuffix("-experimental", report.RunInfo.BrowserName)
+				report.RunInfo.BrowserName = strings.TrimSuffix(report.RunInfo.BrowserName, "-experimental")
 
 				log.Printf("Writing consolidated results to %s/%s", *outputGcsBucket, remoteReportPath)
 				if err = writeJSON(ctx, outputBucket, remoteReportPath, report); err != nil {
