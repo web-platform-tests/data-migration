@@ -41,6 +41,7 @@ var inputGcsBucket *string
 var outputGcsBucket *string
 var wptdHost *string
 var gcpCredentialsFile *string
+var rateLimitGCS *bool
 
 func init() {
 	_, srcFilePath, _, ok := runtime.Caller(0)
@@ -57,6 +58,7 @@ func init() {
 	wptdHost = flag.String("wptd_host", "wpt.fyi", "Hostname of endpoint that serves WPT Dashboard data API")
 	gcpCredentialsFile = flag.String("gcp_credentials_file", "client-secret.json", "Path to credentials file for authenticating against Google Cloud Platform services")
 	skipGitPull = flag.Bool("skip_git_pull", false, "Skip updating the local WPT git checkout")
+	rateLimitGCS = flag.Bool("rate_limit_gcs", false, "Whether or not to rate limit concurrent requests to Google Cloud Storage")
 }
 
 func getRuns(ctx context.Context, client *datastore.Client) ([]*datastore.Key, []shared.TestRun) {
@@ -266,6 +268,11 @@ func main() {
 		Handle: inputBucket,
 	}, datastoreClient)
 
+	var limiter wptStorage.Limiter
+	if *rateLimitGCS {
+		limiter = wptStorage.GCSLimiter()
+	}
+
 	// Forever: Reload wpt revisions and runs; skip handled runs; handle one run;
 	// repeat.
 	for {
@@ -315,7 +322,7 @@ func main() {
 						CreatedAt:         testRun.CreatedAt,
 						RawResultsURL:     testRun.RawResultsURL,
 					},
-				}, true)
+				}, limiter, true)
 				if err != nil {
 					log.Printf("Error loading results for %v from Google Cloud Storage: %v\n", testRun, err)
 					log.Fatal(err)
