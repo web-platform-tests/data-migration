@@ -55,9 +55,6 @@ func monitor() {
 }
 
 func getRuns(ctx context.Context, client *datastore.Client) ([]*datastore.Key, []shared.TestRun) {
-	log.SetFlags(log.LstdFlags | log.Llongfile | log.LUTC)
-	flag.Parse()
-
 	query := datastore.NewQuery("TestRun").Order("CreatedAt")
 	keys := make([]*datastore.Key, 0)
 	testRuns := make([]shared.TestRun, 0)
@@ -98,6 +95,9 @@ func resultValue(res *metrics.TestResults, sub *metrics.SubTest) []byte {
 }
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Llongfile | log.LUTC)
+	flag.Parse()
+
 	go monitor()
 
 	ctx := context.Background()
