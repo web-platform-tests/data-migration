@@ -45,8 +45,13 @@ func main() {
 			rows = append(rows, r)
 			return true
 		},
-		bigtable.RowFilter(bigtable.CellsPerRowLimitFilter(1)),
-		bigtable.LimitRows(1),
+		bigtable.RowFilter(bigtable.ChainFilters(
+			bigtable.ColumnRangeFilter(*outputBTFamily, "/2dcontext/", "/2dcontext0"), // Col filter v1
+			//bigtable.ColumnFilter("^/2dcontext/.*$"),                                  // Col filter v2 ** Somehow not equivalent?
+			bigtable.ValueRangeFilter([]byte("OK"), []byte("PAST")), // Value filter v1
+			//bigtable.ValueFilter("^ERROR$"), // Value filter v2
+		)),
+		bigtable.LimitRows(100),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -54,6 +59,6 @@ func main() {
 	end := time.Now()
 	log.Printf("Query time: %v ; number of rows: %d", end.Sub(start), len(rows))
 	if len(rows) > 0 {
-		log.Printf("First row: %v", rows[0])
+		log.Printf("First row num cols: %v", len(rows[0][*outputBTFamily]))
 	}
 }
