@@ -19,6 +19,14 @@ import (
 	"google.golang.org/api/option"
 )
 
+// BigTable info:
+//
+// Table: wpt-results-per-test
+// RowID: <Long WPT Hash>#<Browser ID>@<TestRun CreatedAt UTC RFC3339>$<Test ID / file name>:<Subtest ID>
+// Column Family: tests
+// Columns: <Test ID / file name> ; <Subtest ID> ; <Message>
+// Values: ...
+
 var projectID *string
 var inputGcsBucket *string
 var gcpCredentialsFile *string
@@ -31,13 +39,12 @@ func init() {
 	inputGcsBucket = flag.String("input_gcs_bucket", "wptd-results", "Google Cloud Storage bucket where shareded test results are stored")
 	gcpCredentialsFile = flag.String("gcp_credentials_file", "client-secret.json", "Path to credentials file for authenticating against Google Cloud Platform services")
 	outputBTInstanceID = flag.String("output_bt_instance_id", "wpt-results-matrix", "Output BigTable instance ID")
-	outputBTTableID = flag.String("output_bt_table_id", "wpt-results", "Output BigTable table ID")
+	outputBTTableID = flag.String("output_bt_table_id", "wpt-results-per-test", "Output BigTable table ID")
 	outputBTFamily = flag.String("output_bt_family", "tests", "Output BigTable column family for test results")
 }
 
 var numConcurrentRuns = int64(100)
-var maxOpsPerMutation = 100000
-var maxMutationsPerBatch = 1
+var maxMutationsPerBatch = 100000
 var maxHeapAlloc = uint64(4.5e+10)
 var monitorSleep = 2 * time.Second
 
@@ -75,23 +82,16 @@ func getRuns(ctx context.Context, client *datastore.Client) ([]*datastore.Key, [
 }
 
 func runID(run shared.TestRun) string {
-	return run.BrowserName + "-" + run.BrowserVersion + "-" + run.OSName + "-" + run.OSVersion + "@" + run.FullRevisionHash + "#" + run.CreatedAt.UTC().Format(time.RFC3339)
+	return run.FullRevisionHash + "#" + run.BrowserName + "-" + run.BrowserVersion + "-" + run.OSName + "-" + run.OSVersion + "@" + run.CreatedAt.UTC().Format(time.RFC3339)
 }
 
-func resultID(res *metrics.TestResults, sub *metrics.SubTest) string {
+func rowID(run shared.TestRun, res *metrics.TestResults, sub *metrics.SubTest) string {
+	id := runID(run) + "$"
 	if sub == nil {
-		return res.Test
+		return id + res.Test
 	}
 
-	return res.Test + "#" + sub.Name
-}
-
-func resultValue(res *metrics.TestResults, sub *metrics.SubTest) []byte {
-	if sub == nil {
-		return []byte(res.Status)
-	}
-
-	return []byte(res.Status + "#" + sub.Status)
+	return id + res.Test + ":" + sub.Name
 }
 
 func main() {
@@ -147,52 +147,53 @@ func main() {
 			}
 
 			log.Printf("INFO: Gathering %d test results", len(report.Results))
-			mutCount := 0
-			id := runID(run)
-			mut := bigtable.NewMutation()
-			muts := []*bigtable.Mutation{mut}
-			rows := []string{id}
-			set := func(family, column string, ts bigtable.Timestamp, value []byte) {
-				if mutCount == maxOpsPerMutation {
-					if len(muts) == maxMutationsPerBatch {
-						rs := rows[0:]
-						ms := muts[0:]
-						errs, err := tbl.ApplyBulk(ctx, rs, ms)
-						if len(errs) > 0 {
-							log.Printf("ERRO: Some writes from BigTable bulk write failed: %v", errs)
-						} else if err != nil {
-							log.Printf("ERRO: BigTable bulk write failed: %v", err)
-						} else {
-							log.Printf("INFO: BigTable bulk write success (%d mutations to row %s)", len(ms), rs[0])
-						}
-
-						mut = bigtable.NewMutation()
-						muts = []*bigtable.Mutation{mut}
-						rows = []string{id}
-						mutCount = 0
+			muts := make([]*bigtable.Mutation, 0)
+			rows := make([]string, 0)
+			set := func(row, family, column string, ts bigtable.Timestamp, value []byte) {
+				mut := bigtable.NewMutation()
+				if len(muts) == maxMutationsPerBatch {
+					rs := rows[0:]
+					ms := muts[0:]
+					errs, err := tbl.ApplyBulk(ctx, rs, ms)
+					if len(errs) > 0 {
+						log.Printf("ERRO: Some writes from BigTable bulk write failed: %v", errs)
+					} else if err != nil {
+						log.Printf("ERRO: BigTable bulk write failed: %v", err)
 					} else {
-						mut = bigtable.NewMutation()
-						muts = append(muts, mut)
-						rows = append(rows, id)
-						mutCount = 0
+						log.Printf("INFO: BigTable bulk write success (%d mutations to row %s)", len(ms), rs[0])
 					}
+
+					muts = make([]*bigtable.Mutation, 0)
+					rows = make([]string, 0)
 				}
 
+				muts = append(muts, mut)
+				rows = append(rows, row)
+
 				mut.Set(family, column, ts, value)
-				mutCount++
 			}
 
 			for _, res := range report.Results {
 				if len(res.Subtests) == 0 {
-					set(*outputBTFamily, resultID(res, nil), ts, resultValue(res, nil))
+					set(rowID(run, res, nil), *outputBTFamily, "status", ts, []byte(res.Status))
+					if res.Message != nil && *res.Message != "" {
+						set(rowID(run, res, nil), *outputBTFamily, "message", ts, []byte(*res.Message))
+					}
 				} else {
 					for _, sub := range res.Subtests {
-						set(*outputBTFamily, resultID(res, &sub), ts, resultValue(res, &sub))
+						set(rowID(run, res, nil), *outputBTFamily, "status", ts, []byte(res.Status))
+						if res.Message != nil && *res.Message != "" {
+							set(rowID(run, res, nil), *outputBTFamily, "status", ts, []byte(*res.Message))
+						}
+						set(rowID(run, res, nil), *outputBTFamily, "substatus", ts, []byte(sub.Status))
+						if sub.Message != nil && *sub.Message != "" {
+							set(rowID(run, res, nil), *outputBTFamily, "submessage", ts, []byte(*sub.Message))
+						}
 					}
 				}
 			}
 
-			if mutCount > 0 {
+			if len(muts) > 0 {
 				rs := rows[0:]
 				ms := muts[0:]
 				errs, err := tbl.ApplyBulk(ctx, rs, ms)
