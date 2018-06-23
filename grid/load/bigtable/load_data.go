@@ -19,6 +19,14 @@ import (
 	"google.golang.org/api/option"
 )
 
+// BigTable info:
+//
+// Table: wpt-results
+// RowID: <Browser ID>@<Long WPT Hash>#<TestRun CreatedAt UTC RFC3339>
+// Column Family: tests
+// Columns: <Test ID / file name>#<Subtest ID>
+// Values: <Test Status>#<Subtest Status>
+
 var projectID *string
 var inputGcsBucket *string
 var gcpCredentialsFile *string
