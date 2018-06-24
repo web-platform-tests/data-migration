@@ -21,11 +21,11 @@ import (
 
 // BigTable info:
 //
-// Table: wpt-results-per-test
-// RowID: <Long WPT Hash>#<Browser ID>@<TestRun CreatedAt UTC RFC3339>$<Test ID / file name>:<Subtest ID>
-// Column Family: tests
-// Columns: <Test ID / file name> ; <Subtest ID> ; <Message>
-// Values: ...
+// Table: wpt-results-per-test-wide
+// RowID: <Test ID / file name>:<Subtest ID>
+// Column Family: runs
+// Columns: <Browser ID>@<Long WPT Hash>#<TestRun CreatedAt UTC RFC3339>
+// Values: <Test Status>#<Test Message>$<Sub Status>#<Sub Message>
 
 var projectID *string
 var inputGcsBucket *string
@@ -39,8 +39,8 @@ func init() {
 	inputGcsBucket = flag.String("input_gcs_bucket", "wptd-results", "Google Cloud Storage bucket where shareded test results are stored")
 	gcpCredentialsFile = flag.String("gcp_credentials_file", "client-secret.json", "Path to credentials file for authenticating against Google Cloud Platform services")
 	outputBTInstanceID = flag.String("output_bt_instance_id", "wpt-results-matrix", "Output BigTable instance ID")
-	outputBTTableID = flag.String("output_bt_table_id", "wpt-results-per-test", "Output BigTable table ID")
-	outputBTFamily = flag.String("output_bt_family", "tests", "Output BigTable column family for test results")
+	outputBTTableID = flag.String("output_bt_table_id", "wpt-results-per-test-wide", "Output BigTable table ID")
+	outputBTFamily = flag.String("output_bt_family", "runs", "Output BigTable column family for test results")
 }
 
 var numConcurrentRuns = int64(100)
@@ -82,16 +82,19 @@ func getRuns(ctx context.Context, client *datastore.Client) ([]*datastore.Key, [
 }
 
 func runID(run shared.TestRun) string {
-	return run.FullRevisionHash + "#" + run.BrowserName + "-" + run.BrowserVersion + "-" + run.OSName + "-" + run.OSVersion + "@" + run.CreatedAt.UTC().Format(time.RFC3339)
+	return run.BrowserName + "-" + run.BrowserVersion + "-" + run.OSName + "-" + run.OSVersion + "@" + run.FullRevisionHash + "#" + run.CreatedAt.UTC().Format(time.RFC3339)
 }
 
-func rowID(run shared.TestRun, res *metrics.TestResults, sub *metrics.SubTest) string {
-	id := runID(run) + "$"
+func rowID(res *metrics.TestResults, sub *metrics.SubTest) string {
 	if sub == nil {
-		return id + res.Test
+		return res.Test
 	}
 
-	return id + res.Test + ":" + sub.Name
+	return res.Test + ":" + sub.Name
+}
+
+func colID(run shared.TestRun) string {
+	return runID(run)
 }
 
 func main() {
@@ -175,19 +178,26 @@ func main() {
 
 			for _, res := range report.Results {
 				if len(res.Subtests) == 0 {
-					set(rowID(run, res, nil), *outputBTFamily, "status", ts, []byte(res.Status))
+
 					if res.Message != nil && *res.Message != "" {
-						set(rowID(run, res, nil), *outputBTFamily, "message", ts, []byte(*res.Message))
+						set(rowID(res, nil), *outputBTFamily, colID(run), ts, []byte(res.Status+"#"+*res.Message))
+					} else {
+						set(rowID(res, nil), *outputBTFamily, colID(run), ts, []byte(res.Status))
 					}
 				} else {
 					for _, sub := range res.Subtests {
-						set(rowID(run, res, nil), *outputBTFamily, "status", ts, []byte(res.Status))
 						if res.Message != nil && *res.Message != "" {
-							set(rowID(run, res, nil), *outputBTFamily, "status", ts, []byte(*res.Message))
-						}
-						set(rowID(run, res, nil), *outputBTFamily, "substatus", ts, []byte(sub.Status))
-						if sub.Message != nil && *sub.Message != "" {
-							set(rowID(run, res, nil), *outputBTFamily, "submessage", ts, []byte(*sub.Message))
+							if sub.Message != nil && *sub.Message != "" {
+								set(rowID(res, nil), *outputBTFamily, colID(run), ts, []byte(res.Status+"#"+*res.Message+"$"+sub.Status+"#"+*sub.Message))
+							} else {
+								set(rowID(res, nil), *outputBTFamily, colID(run), ts, []byte(res.Status+"#"+*res.Message+"$"+sub.Status))
+							}
+						} else {
+							if sub.Message != nil && *sub.Message != "" {
+								set(rowID(res, nil), *outputBTFamily, colID(run), ts, []byte(res.Status+"$"+sub.Status+"#"+*sub.Message))
+							} else {
+								set(rowID(res, nil), *outputBTFamily, colID(run), ts, []byte(res.Status+"$"+sub.Status))
+							}
 						}
 					}
 				}
