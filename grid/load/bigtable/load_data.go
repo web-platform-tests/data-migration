@@ -43,7 +43,7 @@ func init() {
 	outputBTFamily = flag.String("output_bt_family", "tests", "Output BigTable column family for test results")
 }
 
-var numConcurrentRuns = int64(100)
+var numConcurrentRuns = int64(80)
 var maxMutationsPerBatch = 100000
 var maxHeapAlloc = uint64(4.5e+10)
 var monitorSleep = 2 * time.Second
@@ -160,7 +160,7 @@ func main() {
 					} else if err != nil {
 						log.Printf("ERRO: BigTable bulk write failed: %v", err)
 					} else {
-						log.Printf("INFO: BigTable bulk write success (%d mutations to row %s)", len(ms), rs[0])
+						log.Printf("INFO: BigTable bulk write success (%d mutations)", len(ms))
 					}
 
 					muts = make([]*bigtable.Mutation, 0)
