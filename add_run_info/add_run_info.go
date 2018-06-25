@@ -78,6 +78,8 @@ func process(ctx context.Context, ds *datastore.Client, gcs *storage.Client, key
 
 	// Take this chance to use the new dash-separated URL schema.
 	newReportPath := strings.Replace(reportPath, "_", "-", -1)
+	newReportPath = strings.Replace(newReportPath, "*", "_", -1)
+	newReportPath = strings.Replace(newReportPath, " ", "_", -1)
 	newReportFile := bucket.Object(newReportPath)
 	writer := newReportFile.NewWriter(ctx)
 	log.Printf("Writing to %s", newReportPath)
@@ -92,7 +94,7 @@ func process(ctx context.Context, ds *datastore.Client, gcs *storage.Client, key
 	log.Printf("New report URL: %s", newReportURL)
 
 	testRun.RawResultsURL = newReportURL
-	if _, err := ds.Put(ctx, key, testRun); err != nil {
+	if _, err := ds.Put(ctx, key, &testRun); err != nil {
 		return err
 	}
 
