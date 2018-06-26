@@ -20,7 +20,7 @@ func init() {
 	projectID = flag.String("project_id", "wptdashboard", "Google Cloud Platform project id")
 	gcpCredentialsFile = flag.String("gcp_credentials_file", "client-secret.json", "Path to credentials file for authenticating against Google Cloud Platform services")
 	outputBTInstanceID = flag.String("output_bt_instance_id", "wpt-results-matrix", "Output BigTable instance ID")
-	outputBTTableID = flag.String("output_bt_table_id", "wpt-results", "Output BigTable table ID")
+	outputBTTableID = flag.String("output_bt_table_id", "wpt-results-per-test", "Output BigTable table ID")
 	outputBTFamily = flag.String("output_bt_family", "tests", "Output BigTable column family for test results")
 }
 
@@ -40,18 +40,11 @@ func main() {
 	rows := make([]bigtable.Row, 0)
 	err = tbl.ReadRows(
 		ctx,
-		bigtable.PrefixRange("chrome-62.0-linux-3.16@de6ce4a47fe10bc7a86947ca9ff7dbc48c2d4648#"),
+		bigtable.PrefixRange("de6ce4a47fe10bc7a86947ca9ff7dbc48c2d4648#chrome-62.0-linux-3.16@2017-09-30T14:26:23Z$"),
 		func(r bigtable.Row) bool {
 			rows = append(rows, r)
 			return true
 		},
-		bigtable.RowFilter(bigtable.ChainFilters(
-			bigtable.ColumnRangeFilter(*outputBTFamily, "/2dcontext/", "/2dcontext0"), // Col filter v1
-			//bigtable.ColumnFilter("^/2dcontext/.*$"),                                  // Col filter v2 ** Somehow not equivalent?
-			bigtable.ValueRangeFilter([]byte("OK"), []byte("PAST")), // Value filter v1
-			//bigtable.ValueFilter("^ERROR$"), // Value filter v2
-		)),
-		bigtable.LimitRows(100),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -59,6 +52,13 @@ func main() {
 	end := time.Now()
 	log.Printf("Query time: %v ; number of rows: %d", end.Sub(start), len(rows))
 	if len(rows) > 0 {
-		log.Printf("First row num cols: %v", len(rows[0][*outputBTFamily]))
+		for _, item := range rows[0][*outputBTFamily] {
+			log.Printf("First row:\n  Row: %s\n  Col: %s\n  Value: %s\n\n", item.Row, item.Column, string(item.Value))
+		}
+		last := make([]string, 0)
+		for _, item := range rows[len(rows)-1][*outputBTFamily] {
+			log.Printf("Last row:\n  Row: %s\n  Col: %s\n  Value: %s\n\n", item.Row, item.Column, string(item.Value))
+			last = append(last, string(item.Value))
+		}
 	}
 }
