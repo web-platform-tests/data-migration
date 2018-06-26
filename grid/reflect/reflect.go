@@ -2,7 +2,7 @@ package reflect
 
 import (
 	"encoding/json"
-	"errors"
+	"fmt"
 	"go/types"
 	"math/cmplx"
 	"reflect"
@@ -12,28 +12,24 @@ import (
 type Value reflect.Value
 type Chan types.Chan
 
-type BasicComparable interface {
+type Comparable interface {
 	EqualTo(o reflect.Value) bool
 	LessThan(o reflect.Value) bool
 }
 
-type Comparable struct {
-	BasicComparable
-}
-
-func (c Comparable) NotEqualTo(o reflect.Value) bool {
+func NotEqualTo(c Comparable, o reflect.Value) bool {
 	return !c.EqualTo(o)
 }
 
-func (c Comparable) LessThanOrEqualTo(o reflect.Value) bool {
+func LessThanOrEqualTo(c Comparable, o reflect.Value) bool {
 	return c.EqualTo(o) || c.LessThan(o)
 }
 
-func (c Comparable) GreaterThan(o reflect.Value) bool {
-	return !c.LessThanOrEqualTo(o)
+func GreaterThan(c Comparable, o reflect.Value) bool {
+	return !LessThanOrEqualTo(c, o)
 }
 
-func (c Comparable) GreaterThanOrEqualTo(o reflect.Value) bool {
+func GreaterThanOrEqualTo(c Comparable, o reflect.Value) bool {
 	return !c.LessThan(o)
 }
 
@@ -70,8 +66,7 @@ func (s FieldsByName) Less(i, j int) bool {
 	return s[i].Name < s[j].Name
 }
 
-func indirect(o reflect.Value) reflect.Value {
-	v := reflect.ValueOf(o)
+func indirect(v reflect.Value) reflect.Value {
 	for v.Type().Kind() == reflect.Interface || v.Type().Kind() == reflect.Ptr {
 		v = v.Elem()
 	}
@@ -447,7 +442,7 @@ func (c Array) LessThan(o reflect.Value) bool {
 		v2i := v2.Index(i)
 		if c1.LessThan(v2i) {
 			return true
-		} else if c1.GreaterThan(v2i) {
+		} else if GreaterThan(c1, v2i) {
 			return false
 		}
 	}
@@ -499,7 +494,7 @@ func (c Slice) LessThan(o reflect.Value) bool {
 		v2i := v2.Index(i)
 		if c1.LessThan(v2i) {
 			return true
-		} else if c1.GreaterThan(v2i) {
+		} else if GreaterThan(c1, v2i) {
 			return false
 		}
 	}
@@ -562,7 +557,7 @@ func (c Map) LessThan(o reflect.Value) bool {
 		v2i := v2.MapIndex(k)
 		if c1.LessThan(v2i) {
 			return true
-		} else if c1.GreaterThan(v2i) {
+		} else if GreaterThan(c1, v2i) {
 			return false
 		}
 	}
@@ -625,7 +620,7 @@ func (c Struct) LessThan(o reflect.Value) bool {
 		v2i := v2.FieldByName(f.Name)
 		if c1.LessThan(v2i) {
 			return true
-		} else if c1.GreaterThan(v2i) {
+		} else if GreaterThan(c1, v2i) {
 			return false
 		}
 	}
@@ -635,460 +630,457 @@ func (c Struct) LessThan(o reflect.Value) bool {
 
 func GetComparable(v reflect.Value) Comparable {
 	k := indirect(v).Type().Kind()
-	switch {
-	case k == reflect.Int:
-		return Comparable{Int(v)}
-	case k == reflect.Int8:
-		return Comparable{Int8(v)}
-	case k == reflect.Int16:
-		return Comparable{Int16(v)}
-	case k == reflect.Int32:
-		return Comparable{Int32(v)}
-	case k == reflect.Int64:
-		return Comparable{Int64(v)}
-	case k == reflect.Uint:
-		return Comparable{Uint(v)}
-	case k == reflect.Uint8:
-		return Comparable{Uint8(v)}
-	case k == reflect.Uint16:
-		return Comparable{Uint16(v)}
-	case k == reflect.Uint32:
-		return Comparable{Uint32(v)}
-	case k == reflect.Uint64:
-		return Comparable{Uint64(v)}
-	case k == reflect.Uintptr:
-		return Comparable{Uintptr(v)}
-	case k == reflect.Float32:
-		return Comparable{Float32(v)}
-	case k == reflect.Float64:
-		return Comparable{Float64(v)}
-	case k == reflect.Complex64:
-		return Comparable{Complex64(v)}
-	case k == reflect.Complex128:
-		return Comparable{Complex128(v)}
-	case k == reflect.Array:
-		return Comparable{Array{v}}
-	case k == reflect.Slice:
-		return Comparable{Slice{v}}
-	case k == reflect.Map:
-		return Comparable{Map(v)}
-	case k == reflect.Struct:
-		return Comparable{Struct(v)}
+	switch k {
+	case reflect.Int:
+		return Int(v)
+	case reflect.Int8:
+		return Int8(v)
+	case reflect.Int16:
+		return Int16(v)
+	case reflect.Int32:
+		return Int32(v)
+	case reflect.Int64:
+		return Int64(v)
+	case reflect.Uint:
+		return Uint(v)
+	case reflect.Uint8:
+		return Uint8(v)
+	case reflect.Uint16:
+		return Uint16(v)
+	case reflect.Uint32:
+		return Uint32(v)
+	case reflect.Uint64:
+		return Uint64(v)
+	case reflect.Uintptr:
+		return Uintptr(v)
+	case reflect.Float32:
+		return Float32(v)
+	case reflect.Float64:
+		return Float64(v)
+	case reflect.Complex64:
+		return Complex64(v)
+	case reflect.Complex128:
+		return Complex128(v)
+	case reflect.Array:
+		return Array{v}
+	case reflect.Slice:
+		return Slice{v}
+	case reflect.Map:
+		return Map(v)
+	case reflect.String:
+		return String(v)
+	case reflect.Struct:
+		return Struct(v)
 	default:
-		return Comparable{invalid}
+		return invalid
 	}
 }
 
-type BasicFunctor interface {
-	F(...interface{}) interface{}
+func MethodByName(v reflect.Value, name string) (reflect.Value, error) {
+	t := indirect(v).Type()
+	if _, ok := t.MethodByName(name); !ok {
+		return v, fmt.Errorf("Failed to find method, %s, for %v of indirected type %v", name, v, t)
+	}
+	return v.MethodByName(name), nil
 }
 
+func FieldByName(v reflect.Value, name string) (reflect.Value, error) {
+	t := indirect(v).Type()
+	if _, ok := t.FieldByName(name); !ok {
+		return v, fmt.Errorf("Failed to find field, %s, for %v of indirected type %v", name, v, t)
+	}
+	return v.FieldByName(name), nil
+}
+
+type Functor interface {
+	F(...interface{}) (interface{}, error)
+}
+
+/*
 type Functor struct {
 	BasicFunctor
 	*ValueFunctor
 }
+*/
 
-func (f Functor) F(args ...interface{}) interface{} {
-	return f.BasicFunctor.F(args...)
+func F(f Functor, args ...interface{}) (interface{}, error) {
+	return f.F(args...)
 }
 
-func (f Functor) ToValueFunctor() ValueFunctor {
-	if f.ValueFunctor == nil {
-		f.ValueFunctor = &ValueFunctor{
-			Functor: &f,
-		}
+type ValueFunctor interface {
+	F(...reflect.Value) (reflect.Value, error)
+}
+
+type ConvertedValueFunctor struct {
+	Functor
+}
+
+func (cvf ConvertedValueFunctor) F(vs ...reflect.Value) (reflect.Value, error) {
+	args := make([]interface{}, 0, len(vs))
+	for _, v := range vs {
+		args = append(args, v.Interface())
 	}
-	return *f.ValueFunctor
+	i, err := cvf.Functor.F(args...)
+	return reflect.ValueOf(i), err
 }
 
-type BasicValueFunctor interface {
-	F(...reflect.Value) reflect.Value
+type ConvertedFunctor struct {
+	ValueFunctor
 }
 
+func (cf ConvertedFunctor) F(is ...interface{}) (interface{}, error) {
+	args := make([]reflect.Value, 0, len(is))
+	for _, i := range is {
+		args = append(args, reflect.ValueOf(i))
+	}
+	v, err := cf.ValueFunctor.F(args...)
+	return v.Interface(), err
+}
+
+func ToValueFunctor(f Functor) ValueFunctor {
+	cf, ok := f.(ConvertedFunctor)
+	if ok {
+		return cf.ValueFunctor
+	}
+
+	return ConvertedValueFunctor{
+		Functor: f,
+	}
+}
+
+func ToFunctor(vf ValueFunctor) Functor {
+	cvf, ok := vf.(ConvertedValueFunctor)
+	if ok {
+		return cvf.Functor
+	}
+
+	return ConvertedFunctor{
+		ValueFunctor: vf,
+	}
+}
+
+/*
 type ValueFunctor struct {
 	BasicValueFunctor
 	*Functor
 }
+*/
 
-func (f ValueFunctor) F(args ...reflect.Value) reflect.Value {
-	return f.BasicValueFunctor.F(args...)
-}
-
-func (f ValueFunctor) ToFunctor() Functor {
-	if f.Functor == nil {
-		f.Functor = &Functor{
-			ValueFunctor: &f,
-		}
-	}
-	return *f.Functor
+func VF(vf ValueFunctor, args ...reflect.Value) (reflect.Value, error) {
+	return vf.F(args...)
 }
 
 type Constant reflect.Value
 
-func (c Constant) F(args ...reflect.Value) reflect.Value {
-	return reflect.Value(c)
+func (c Constant) F(args ...reflect.Value) (reflect.Value, error) {
+	return reflect.Value(c), nil
 }
 
 type Property struct {
-	PropertyName string
+	PropertyName string `json:"property_name"`
 }
 
-func (d Property) F(args ...reflect.Value) reflect.Value {
-	return args[0].FieldByName(d.PropertyName)
+func (p Property) F(args ...reflect.Value) (reflect.Value, error) {
+	return FieldByName(args[0], p.PropertyName)
 }
 
 type Method struct {
-	MethodName string
+	MethodName string `json:"method_name"`
 }
 
-func (m Method) F(args ...reflect.Value) reflect.Value {
-	return args[0].MethodByName(m.MethodName).Call(args[1:])[0]
+func (m Method) F(args ...reflect.Value) (reflect.Value, error) {
+	method, err := MethodByName(args[0], m.MethodName)
+	if err != nil {
+		return method, err
+	}
+	return method.Call(args[1:])[0], nil
 }
 
 type Dot struct {
-	First  Property
-	Second Property
+	First  Property `json:"first"`
+	Second Property `json:"second"`
 }
 
-func (d Dot) F(args ...reflect.Value) reflect.Value {
-	return d.Second.F(d.First.F(args[0]))
+func (d Dot) F(args ...reflect.Value) (reflect.Value, error) {
+	fst, err := d.First.F(args[0])
+	if err != nil {
+		return fst, err
+	}
+	return d.Second.F(fst)
 }
 
-type ComparableValueFunctor struct {
-	Name string
+type Eq struct{}
+
+func (c Eq) F(args ...reflect.Value) (reflect.Value, error) {
+	return reflect.ValueOf(GetComparable(args[0]).EqualTo(args[1])), nil
 }
 
-func (c ComparableValueFunctor) F(args ...reflect.Value) reflect.Value {
-	return reflect.ValueOf(GetComparable(args[0])).MethodByName(c.Name).Call([]reflect.Value{args[1]})[0]
+type Lt struct{}
+
+func (c Lt) F(args ...reflect.Value) (reflect.Value, error) {
+	return reflect.ValueOf(GetComparable(args[0]).LessThan(args[1])), nil
 }
 
-var eq = ValueFunctor{
-	ComparableValueFunctor{"EqualTo"},
-	nil,
+type Neq struct{}
+
+func (c Neq) F(args ...reflect.Value) (reflect.Value, error) {
+	return reflect.ValueOf(NotEqualTo(GetComparable(args[0]), args[1])), nil
 }
-var neq = ValueFunctor{
-	ComparableValueFunctor{"NotEqualTo"},
-	nil,
+
+type Lte struct{}
+
+func (c Lte) F(args ...reflect.Value) (reflect.Value, error) {
+	return reflect.ValueOf(LessThanOrEqualTo(GetComparable(args[0]), args[1])), nil
 }
-var lt = ValueFunctor{
-	ComparableValueFunctor{"LessThan"},
-	nil,
+
+type Gt struct{}
+
+func (c Gt) F(args ...reflect.Value) (reflect.Value, error) {
+	return reflect.ValueOf(GreaterThan(GetComparable(args[0]), args[1])), nil
 }
-var lte = ValueFunctor{
-	ComparableValueFunctor{"LessThanOrEqualTo"},
-	nil,
-}
-var gt = ValueFunctor{
-	ComparableValueFunctor{"GreaterThan"},
-	nil,
-}
-var gte = ValueFunctor{
-	ComparableValueFunctor{"GreaterThanOrEqualTo"},
-	nil,
+
+type Gte struct{}
+
+func (c Gte) F(args ...reflect.Value) (reflect.Value, error) {
+	return reflect.ValueOf(GreaterThanOrEqualTo(GetComparable(args[0]), args[1])), nil
 }
 
 type Binary struct {
-	LHS ValueFunctor
-	Op  ValueFunctor
-	RHS ValueFunctor
+	LHS ValueFunctor `json:"lhs"`
+	Op  ValueFunctor `json:"op"`
+	RHS ValueFunctor `json:"rhs"`
 }
 
-func (b Binary) F(args ...reflect.Value) reflect.Value {
-	return b.Op.F(b.LHS.F(args...), b.RHS.F(args...))
+func (b Binary) F(args ...reflect.Value) (reflect.Value, error) {
+	l, err := b.LHS.F(args...)
+	if err != nil {
+		return l, err
+	}
+	r, err := b.RHS.F(args...)
+	if err != nil {
+		return r, err
+	}
+	return b.Op.F(l, r)
 }
+
+var (
+	eq  = Eq{}
+	lt  = Lt{}
+	neq = Neq{}
+	lte = Lte{}
+	gt  = Gt{}
+	gte = Gte{}
+)
 
 func EQ(lhs, rhs ValueFunctor) ValueFunctor {
-	return ValueFunctor{
-		Binary{
-			LHS: lhs,
-			Op:  eq,
-			RHS: rhs,
-		},
-		nil,
+	return Binary{
+		LHS: lhs,
+		Op:  eq,
+		RHS: rhs,
 	}
 }
 
 func NEQ(lhs, rhs ValueFunctor) ValueFunctor {
-	return ValueFunctor{
-		Binary{
-			LHS: lhs,
-			Op:  neq,
-			RHS: rhs,
-		},
-		nil,
+	return Binary{
+		LHS: lhs,
+		Op:  neq,
+		RHS: rhs,
 	}
 }
 
 func LT(lhs, rhs ValueFunctor) ValueFunctor {
-	return ValueFunctor{
-		Binary{
-			LHS: lhs,
-			Op:  lt,
-			RHS: rhs,
-		},
-		nil,
+	return Binary{
+		LHS: lhs,
+		Op:  lt,
+		RHS: rhs,
 	}
 }
 
 func LTE(lhs, rhs ValueFunctor) ValueFunctor {
-	return ValueFunctor{
-		Binary{
-			LHS: lhs,
-			Op:  lte,
-			RHS: rhs,
-		},
-		nil,
+	return Binary{
+		LHS: lhs,
+		Op:  lte,
+		RHS: rhs,
 	}
 }
 
 func GT(lhs, rhs ValueFunctor) ValueFunctor {
-	return ValueFunctor{
-		Binary{
-			LHS: lhs,
-			Op:  gt,
-			RHS: rhs,
-		},
-		nil,
+	return Binary{
+		LHS: lhs,
+		Op:  gt,
+		RHS: rhs,
 	}
 }
 
 func GTE(lhs, rhs ValueFunctor) ValueFunctor {
-	return ValueFunctor{
-		Binary{
-			LHS: lhs,
-			Op:  gte,
-			RHS: rhs,
-		},
-		nil,
+	return Binary{
+		LHS: lhs,
+		Op:  gte,
+		RHS: rhs,
 	}
 }
 
 type AndOp struct{}
 
-func (AndOp) F(args ...reflect.Value) reflect.Value {
-	return reflect.ValueOf(args[0].Bool() && args[1].Bool())
+func (AndOp) F(args ...reflect.Value) (reflect.Value, error) {
+	return reflect.ValueOf(args[0].Bool() && args[1].Bool()), nil
 }
 
 type OrOp struct{}
 
-func (OrOp) F(args ...reflect.Value) reflect.Value {
-	return reflect.ValueOf(args[0].Bool() || args[1].Bool())
+func (OrOp) F(args ...reflect.Value) (reflect.Value, error) {
+	return reflect.ValueOf(args[0].Bool() || args[1].Bool()), nil
 }
 
-var and = ValueFunctor{
-	AndOp{},
-	nil,
-}
-var or = ValueFunctor{
-	OrOp{},
-	nil,
-}
+var (
+	and = AndOp{}
+	or  = OrOp{}
+)
 
 func AND(lhs, rhs ValueFunctor) ValueFunctor {
-	return ValueFunctor{
-		Binary{
-			LHS: lhs,
-			Op:  and,
-			RHS: rhs,
-		},
-		nil,
+	return Binary{
+		LHS: lhs,
+		Op:  and,
+		RHS: rhs,
 	}
 }
 
 func OR(lhs, rhs ValueFunctor) ValueFunctor {
-	return ValueFunctor{
-		Binary{
-			LHS: lhs,
-			Op:  or,
-			RHS: rhs,
-		},
-		nil,
+	return Binary{
+		LHS: lhs,
+		Op:  or,
+		RHS: rhs,
 	}
 }
 
 type Distinct struct {
-	Arg ValueFunctor
+	Arg ValueFunctor `json:"distinct"`
 }
 
-func (d Distinct) F(args ...reflect.Value) reflect.Value {
+func (d Distinct) F(args ...reflect.Value) (reflect.Value, error) {
 	seen := make(map[interface{}]bool)
 	results := reflect.MakeSlice(reflect.TypeOf(args[0]), 0, 0)
 
 	for _, v := range args {
-		k := d.Arg.F(v).Interface()
+		kv, err := d.Arg.F(v)
+		if err != nil {
+			return kv, err
+		}
+
+		k := kv.Interface()
 		if _, ok := seen[k]; !ok {
 			seen[k] = true
 			results = reflect.Append(results, v)
 		}
 	}
 
-	return results
+	return results, nil
 }
 
 func DISTINCT(arg ValueFunctor) ValueFunctor {
-	return ValueFunctor{
-		Distinct{arg},
-		nil,
-	}
+	return Distinct{arg}
 }
 
-type BasicJSONSelector interface {
-	Select([]byte) *interface{}
-}
-
-type JSONSelector struct {
-	BasicJSONSelector
-}
-
-func (s JSONSelector) Unmarshal(data []byte) (*interface{}, error) {
-	ptr := s.Select(data)
-	if ptr == nil {
-		return ptr, errors.New("Failed to select type for JSON")
-	}
-
-	if err := json.Unmarshal(data, ptr); err != nil {
-		return nil, err
-	}
-
-	return ptr, nil
-}
-
-type FieldExistsJSONSelector struct {
-	Ptr   *interface{}
-	Field string
-}
-
-func (s FieldExistsJSONSelector) Select(data []byte) *interface{} {
-	if err := json.Unmarshal(data, s.Ptr); err != nil {
-		return nil
-	}
-
-	f := reflect.ValueOf(*s.Ptr).FieldByName(s.Field)
-	z := reflect.Zero(f.Type()).Interface()
-	v := f.Interface()
-	if v == z {
-		return nil
-	}
-	var copied interface{}
-	copied = v
-	return &copied
-}
-
-type StringFieldValueJSONSelector struct {
-	Map map[string]interface{}
-
-	FieldExistsJSONSelector
-}
-
-func (s StringFieldValueJSONSelector) Select(data []byte) *interface{} {
-	if err := json.Unmarshal(data, s.Ptr); err != nil {
-		return nil
-	}
-
-	k := (reflect.ValueOf(*s.Ptr).FieldByName(s.Field).Interface()).(string)
-	v, ok := s.Map[k]
-	if !ok {
-		return nil
-	}
-	var copied interface{}
-	copied = v
-	return &copied
-}
-
-var opJSON interface{} = OpJSON{}
-var opSelector = StringFieldValueJSONSelector{
-	FieldExistsJSONSelector: FieldExistsJSONSelector{
-		Ptr:   &opJSON,
-		Field: "Op",
-	},
-	Map: map[string]interface{}{
-		"eq":       eq,
-		"neq":      neq,
-		"lt":       lt,
-		"lte":      lte,
-		"gt":       gt,
-		"gte":      gte,
-		"and":      and,
-		"or":       or,
-		"distinct": ValueFunctor{Distinct{}, nil},
-	},
-}
-
-type OpJSON struct {
-	Op   string
-	Rest json.RawMessage
-}
-
-/*
 type BinaryJSON struct {
-	LHS JSON
-	RHS JSON
+	LHS json.RawMessage `json:"lhs"`
+	Op  string          `json:"op"`
+	RHS json.RawMessage `json:"rhs"`
 }
 
-var ErrUnclassedValue = errors.New("Unclassed value")
-
-var CanonicalBasicValueFunctor BasicValueFunctor
-var BasicValueFunctorType = reflect.TypeOf(CanonicalBasicValueFunctor)
-var CanonicalBasicFunctor BasicValueFunctor
-var BasicFunctorType = reflect.TypeOf(CanonicalBasicValueFunctor)
-
-func wrapFunctor(f interface{}) interface{} {
-	var ret interface{}
-	if reflect.TypeOf(f).ConvertibleTo(BasicValueFunctorType) {
-		bvf := (f).(BasicValueFunctor)
-		ret = ValueFunctor{
-			bvf,
-			nil,
-		}
-	} else if reflect.TypeOf(f).ConvertibleTo(BasicFunctorType) {
-		bf := (f).(BasicFunctor)
-		ret = Functor{
-			bf,
-			nil,
-		}
-	} else {
-		ret = f
-	}
-
-	return ret
-}
-
-func (l *JSONClassLoader) UnmarshalJSON(data []byte) error {
-	var v JSON
-	var ptr *interface{}
-	if err := json.Unmarshal(data, &v); err != nil {
-		var copied interface{}
-		copied = *l.Default
-		ptr = &copied
-	} else {
-		ptr := l.Lookup(v.Class)
-		if ptr == nil {
-			var copied interface{}
-			copied = *l.Default
-			ptr = &copied
-		}
-	}
-
-	if err := json.Unmarshal(v.Rest, ptr); err != nil {
+func (b *Binary) UnmarshalJSON(bs []byte) error {
+	var raw BinaryJSON
+	if err := json.Unmarshal(bs, &raw); err != nil {
 		return err
 	}
-
-	l.Value = l.Convert(*ptr)
+	var lhs MValueFunctor
+	var rhs MValueFunctor
+	if err := json.Unmarshal(raw.LHS, &lhs); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(raw.RHS, &rhs); err != nil {
+		return err
+	}
+	b.LHS = lhs.ValueFunctor
+	b.RHS = rhs.ValueFunctor
+	switch raw.Op {
+	case "eq":
+		b.Op = eq
+	case "lt":
+		b.Op = lt
+	case "neq":
+		b.Op = neq
+	case "lte":
+		b.Op = lte
+	case "gt":
+		b.Op = gt
+	case "gte":
+		b.Op = gte
+	default:
+		return fmt.Errorf("Unknown binary operation: \"%s\"", raw.Op)
+	}
 	return nil
 }
 
-func (f *ValueFunctor) UnmarshalJSON(data []byte) error {
-	var binOp Binary
-	if err := json.Unmarshal(bytes, &binOp); err != nil {
-		//...
-	}
+type MValueFunctor struct {
+	ValueFunctor
 }
 
-func (f *Binary) UnmarshalJSON(data []byte) error {
-	var opJSON FunctorJSON
-	if err := json.Unmarshal(data, &opJSON); err != nil {
-		return err
+func (mvf *MValueFunctor) UnmarshalJSON(bs []byte) error {
+	var b Binary
+	if err := json.Unmarshal(bs, &b); err == nil {
+		mvf.ValueFunctor = b
+		return nil
 	}
-	return nil
+	var p Property
+	if err := json.Unmarshal(bs, &p); err == nil && p.PropertyName != "" {
+		mvf.ValueFunctor = p
+		return nil
+	}
+	var d Dot
+	if err := json.Unmarshal(bs, &d); err == nil && d.First.PropertyName != "" && d.Second.PropertyName != "" {
+		mvf.ValueFunctor = d
+		return nil
+	}
+	var dis Distinct
+	if err := json.Unmarshal(bs, &dis); err == nil && dis.Arg != nil {
+		mvf.ValueFunctor = dis
+		return nil
+	}
+	var m Method
+	if err := json.Unmarshal(bs, &m); err == nil && m.MethodName != "" {
+		mvf.ValueFunctor = m
+		return nil
+	}
+	var c Constant
+	if err := json.Unmarshal(bs, &c); err == nil {
+		mvf.ValueFunctor = c
+		return nil
+	}
+
+	return fmt.Errorf("Failed to unmarshal one of %v from %s", []interface{}{b, p, d, dis, m, c}, string(bs))
 }
-*/
+
+func (c *Constant) UnmarshalJSON(bs []byte) error {
+	vs := []interface{}{
+		int(0),
+		float32(0),
+		false,
+		"",
+	}
+	// TODO(markdittmer): Handle null values.
+	for _, v := range vs {
+		if err := json.Unmarshal(bs, &v); err == nil {
+			*c = Constant(reflect.ValueOf(v))
+			return nil
+		}
+	}
+	return fmt.Errorf("Failed to unmarshal one of %v from %s", vs, string(bs))
+}
+
+func (c Constant) MarshalJSON() ([]byte, error) {
+	return json.Marshal(reflect.Value(c).Interface())
+}
+
+func (o Neq) MarshalJSON() ([]byte, error) {
+	return []byte(`"neq"`), nil
+}
