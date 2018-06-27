@@ -2,9 +2,9 @@ package reflect
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/types"
-	"log"
 	"math/cmplx"
 	"reflect"
 	"sort"
@@ -74,7 +74,8 @@ func indirect(v reflect.Value) reflect.Value {
 	return v
 }
 
-func typeLessThan(t1, t2 reflect.Type) bool {
+func typeLessThan(v reflect.Value, t2 reflect.Type) bool {
+	t1 := reflect.TypeOf(v.Interface())
 	return t1.PkgPath()+"/"+t1.Name() < t2.PkgPath()+"/"+t2.Name()
 }
 
@@ -107,7 +108,7 @@ func (c String) LessThan(o reflect.Value) bool {
 	if v.Type().Kind() == reflect.String {
 		return reflect.Value(c).String() < v.String()
 	}
-	return typeLessThan(reflect.TypeOf(c), v.Type())
+	return typeLessThan(reflect.Value(c), v.Type())
 }
 
 type Bool Value
@@ -125,188 +126,87 @@ func (c Bool) LessThan(o reflect.Value) bool {
 	if v.Type().Kind() == reflect.Bool {
 		return !reflect.Value(c).Bool() && v.Bool()
 	}
-	return typeLessThan(reflect.TypeOf(c), v.Type())
+	return typeLessThan(reflect.Value(c), v.Type())
 }
 
 type Int Value
 
+func isInt(k reflect.Kind) bool {
+	return k == reflect.Int8 || k == reflect.Int16 || k == reflect.Int32 || k == reflect.Int64 || k == reflect.Int
+}
+
 func (c Int) EqualTo(o reflect.Value) bool {
 	v := indirect(o)
-	if v.Type().Kind() == reflect.Int {
+	k := v.Type().Kind()
+	if isInt(k) {
 		return reflect.Value(c).Int() == v.Int()
+	} else if isUint(k) {
+		u := v.Uint()
+		if u == u<<1>>1 {
+			return reflect.Value(c).Int() == int64(u)
+		}
+		return false
+	} else if isFloat(k) {
+		return float64(reflect.Value(c).Int()) == v.Float()
 	}
 	return false
 }
 
 func (c Int) LessThan(o reflect.Value) bool {
 	v := indirect(o)
-	if v.Type().Kind() == reflect.Int {
+	k := v.Type().Kind()
+	if isInt(k) {
 		return reflect.Value(c).Int() < v.Int()
+	} else if isUint(k) {
+		u := v.Uint()
+		if u == u<<1>>1 {
+			return reflect.Value(c).Int() < int64(u)
+		}
+		return true
+	} else if isFloat(k) {
+		return float64(reflect.Value(c).Int()) < v.Float()
 	}
-	return typeLessThan(reflect.TypeOf(c), v.Type())
-}
-
-type Int8 Value
-
-func (c Int8) EqualTo(o reflect.Value) bool {
-	v := indirect(o)
-	if v.Type().Kind() == reflect.Int8 {
-		return reflect.Value(c).Int() == v.Int()
-	}
-	return false
-}
-
-func (c Int8) LessThan(o reflect.Value) bool {
-	v := indirect(o)
-	if v.Type().Kind() == reflect.Int8 {
-		return reflect.Value(c).Int() < v.Int()
-	}
-	return typeLessThan(reflect.TypeOf(c), v.Type())
-}
-
-type Int16 Value
-
-func (c Int16) EqualTo(o reflect.Value) bool {
-	v := indirect(o)
-	if v.Type().Kind() == reflect.Int16 {
-		return reflect.Value(c).Int() == v.Int()
-	}
-	return false
-}
-
-func (c Int16) LessThan(o reflect.Value) bool {
-	v := indirect(o)
-	if v.Type().Kind() == reflect.Int16 {
-		return reflect.Value(c).Int() < v.Int()
-	}
-	return typeLessThan(reflect.TypeOf(c), v.Type())
-}
-
-type Int32 Value
-
-func (c Int32) EqualTo(o reflect.Value) bool {
-	v := indirect(o)
-	if v.Type().Kind() == reflect.Int32 {
-		return reflect.Value(c).Int() == v.Int()
-	}
-	return false
-}
-
-func (c Int32) LessThan(o reflect.Value) bool {
-	v := indirect(o)
-	if v.Type().Kind() == reflect.Int32 {
-		return reflect.Value(c).Int() < v.Int()
-	}
-	return typeLessThan(reflect.TypeOf(c), v.Type())
-}
-
-type Int64 Value
-
-func (c Int64) EqualTo(o reflect.Value) bool {
-	v := indirect(o)
-	if v.Type().Kind() == reflect.Int64 {
-		return reflect.Value(c).Int() == v.Int()
-	}
-	return false
-}
-
-func (c Int64) LessThan(o reflect.Value) bool {
-	v := indirect(o)
-	if v.Type().Kind() == reflect.Int64 {
-		return reflect.Value(c).Int() < v.Int()
-	}
-	return typeLessThan(reflect.TypeOf(c), v.Type())
+	return typeLessThan(reflect.Value(c), v.Type())
 }
 
 type Uint Value
 
+func isUint(k reflect.Kind) bool {
+	return k == reflect.Uint8 || k == reflect.Uint16 || k == reflect.Uint32 || k == reflect.Uint64 || k == reflect.Uint
+}
+
 func (c Uint) EqualTo(o reflect.Value) bool {
 	v := indirect(o)
-	if v.Type().Kind() == reflect.Uint {
+	k := v.Type().Kind()
+	if isUint(k) {
 		return reflect.Value(c).Uint() == v.Uint()
+	} else if isInt(k) {
+		i := v.Int()
+		if i >= 0 {
+			return reflect.Value(c).Uint() == uint64(i)
+		}
+		return false
+	} else if isFloat(k) {
+		return float64(reflect.Value(c).Uint()) == v.Float()
 	}
 	return false
 }
 
 func (c Uint) LessThan(o reflect.Value) bool {
 	v := indirect(o)
-	if v.Type().Kind() == reflect.Uint {
+	k := v.Type().Kind()
+	if isUint(k) {
 		return reflect.Value(c).Uint() < v.Uint()
+	} else if isInt(k) {
+		i := v.Int()
+		if i >= 0 {
+			return reflect.Value(c).Uint() < uint64(i)
+		}
+		return false
+	} else if isFloat(k) {
+		return float64(reflect.Value(c).Uint()) < v.Float()
 	}
-	return typeLessThan(reflect.TypeOf(c), v.Type())
-}
-
-type Uint8 Value
-
-func (c Uint8) EqualTo(o reflect.Value) bool {
-	v := indirect(o)
-	if v.Type().Kind() == reflect.Uint8 {
-		log.Printf("%d %d", reflect.Value(c).Uint(), v.Uint())
-		return reflect.Value(c).Uint() == v.Uint()
-	}
-	return false
-}
-
-func (c Uint8) LessThan(o reflect.Value) bool {
-	v := indirect(o)
-	if v.Type().Kind() == reflect.Uint8 {
-		return reflect.Value(c).Uint() < v.Uint()
-	}
-	return typeLessThan(reflect.TypeOf(c), v.Type())
-}
-
-type Uint16 Value
-
-func (c Uint16) EqualTo(o reflect.Value) bool {
-	v := indirect(o)
-	if v.Type().Kind() == reflect.Uint16 {
-		return reflect.Value(c).Uint() == v.Uint()
-	}
-	return false
-}
-
-func (c Uint16) LessThan(o reflect.Value) bool {
-	v := indirect(o)
-	if v.Type().Kind() == reflect.Uint16 {
-		return reflect.Value(c).Uint() < v.Uint()
-	}
-	return typeLessThan(reflect.TypeOf(c), v.Type())
-}
-
-type Uint32 Value
-
-func (c Uint32) EqualTo(o reflect.Value) bool {
-	v := indirect(o)
-	if v.Type().Kind() == reflect.Uint32 {
-		return reflect.Value(c).Uint() == v.Uint()
-	}
-	return false
-}
-
-func (c Uint32) LessThan(o reflect.Value) bool {
-	v := indirect(o)
-	if v.Type().Kind() == reflect.Uint32 {
-		return reflect.Value(c).Uint() < v.Uint()
-	}
-	return typeLessThan(reflect.TypeOf(c), v.Type())
-}
-
-type Uint64 Value
-
-func (c Uint64) EqualTo(o reflect.Value) bool {
-	v := indirect(o)
-	if v.Type().Kind() == reflect.Uint64 {
-		return reflect.Value(c).Uint() == v.Uint()
-	}
-	return false
-}
-
-func (c Uint64) LessThan(o reflect.Value) bool {
-	v := indirect(o)
-	if v.Type().Kind() == reflect.Uint64 {
-		return reflect.Value(c).Uint() < v.Uint()
-	}
-	return typeLessThan(reflect.TypeOf(c), v.Type())
+	return typeLessThan(reflect.Value(c), v.Type())
 }
 
 type Uintptr Value
@@ -324,79 +224,61 @@ func (c Uintptr) LessThan(o reflect.Value) bool {
 	if v.Type().Kind() == reflect.Uintptr {
 		return reflect.Value(c).Pointer() < v.Pointer()
 	}
-	return typeLessThan(reflect.TypeOf(c), v.Type())
+	return typeLessThan(reflect.Value(c), v.Type())
 }
 
-type Float32 Value
+type Float Value
 
-func (c Float32) EqualTo(o reflect.Value) bool {
+func isFloat(k reflect.Kind) bool {
+	return k == reflect.Float32 || k == reflect.Float64
+}
+
+func (c Float) EqualTo(o reflect.Value) bool {
 	v := indirect(o)
-	if v.Type().Kind() == reflect.Float32 {
+	k := v.Type().Kind()
+	if isFloat(k) {
 		return reflect.Value(c).Float() == v.Float()
+	} else if isUint(k) {
+		return reflect.Value(c).Float() == float64(v.Uint())
+	} else if isInt(k) {
+		return reflect.Value(c).Float() == float64(v.Int())
 	}
 	return false
 }
 
-func (c Float32) LessThan(o reflect.Value) bool {
+func (c Float) LessThan(o reflect.Value) bool {
 	v := indirect(o)
-	if v.Type().Kind() == reflect.Float32 {
+	k := v.Type().Kind()
+	if isFloat(k) {
 		return reflect.Value(c).Float() < v.Float()
+	} else if isUint(k) {
+		return reflect.Value(c).Float() < float64(v.Uint())
+	} else if isInt(k) {
+		return reflect.Value(c).Float() < float64(v.Int())
 	}
-	return typeLessThan(reflect.TypeOf(c), v.Type())
+	return typeLessThan(reflect.Value(c), v.Type())
 }
 
-type Float64 Value
+type Complex Value
 
-func (c Float64) EqualTo(o reflect.Value) bool {
-	v := indirect(o)
-	if v.Type().Kind() == reflect.Float64 {
-		return reflect.Value(c).Float() == v.Float()
-	}
-	return false
+func isComplex(k reflect.Kind) bool {
+	return k == reflect.Complex64 || k == reflect.Complex128
 }
 
-func (c Float64) LessThan(o reflect.Value) bool {
+func (c Complex) EqualTo(o reflect.Value) bool {
 	v := indirect(o)
-	if v.Type().Kind() == reflect.Float64 {
-		return reflect.Value(c).Float() < v.Float()
-	}
-	return typeLessThan(reflect.TypeOf(c), v.Type())
-}
-
-type Complex64 Value
-
-func (c Complex64) EqualTo(o reflect.Value) bool {
-	v := indirect(o)
-	if v.Type().Kind() == reflect.Complex64 {
+	if isComplex(v.Type().Kind()) {
 		return reflect.Value(c).Complex() == v.Complex()
 	}
 	return false
 }
 
-func (c Complex64) LessThan(o reflect.Value) bool {
+func (c Complex) LessThan(o reflect.Value) bool {
 	v := indirect(o)
-	if v.Type().Kind() == reflect.Complex64 {
+	if isComplex(v.Type().Kind()) {
 		return cmplx.Abs(reflect.Value(c).Complex()) < cmplx.Abs(v.Complex())
 	}
-	return typeLessThan(reflect.TypeOf(c), v.Type())
-}
-
-type Complex128 Value
-
-func (c Complex128) EqualTo(o reflect.Value) bool {
-	v := indirect(o)
-	if v.Type().Kind() == reflect.Complex128 {
-		return reflect.Value(c).Complex() == v.Complex()
-	}
-	return false
-}
-
-func (c Complex128) LessThan(o reflect.Value) bool {
-	v := indirect(o)
-	if v.Type().Kind() == reflect.Complex128 {
-		return cmplx.Abs(reflect.Value(c).Complex()) < cmplx.Abs(v.Complex())
-	}
-	return typeLessThan(reflect.TypeOf(c), v.Type())
+	return typeLessThan(reflect.Value(c), v.Type())
 }
 
 type Array struct {
@@ -430,7 +312,7 @@ func (c Array) LessThan(o reflect.Value) bool {
 	v2 := indirect(o)
 
 	if v2.Type().Kind() != reflect.Array {
-		return typeLessThan(v1.Type(), v2.Type())
+		return typeLessThan(v1, v2.Type())
 	}
 
 	if v1.Len() < v2.Len() {
@@ -442,10 +324,8 @@ func (c Array) LessThan(o reflect.Value) bool {
 	for i := 0; i < v1.Len(); i++ {
 		c1 := GetComparable(v1.Index(i))
 		v2i := v2.Index(i)
-		if c1.LessThan(v2i) {
-			return true
-		} else if GreaterThan(c1, v2i) {
-			return false
+		if !c1.EqualTo(v2i) {
+			return c1.LessThan(v2i)
 		}
 	}
 
@@ -482,7 +362,7 @@ func (c Slice) LessThan(o reflect.Value) bool {
 	v2 := indirect(o)
 
 	if v2.Type().Kind() != reflect.Slice {
-		return typeLessThan(v1.Type(), v2.Type())
+		return typeLessThan(v1, v2.Type())
 	}
 
 	if v1.Len() < v2.Len() {
@@ -494,10 +374,8 @@ func (c Slice) LessThan(o reflect.Value) bool {
 	for i := 0; i < v1.Len(); i++ {
 		c1 := GetComparable(v1.Index(i))
 		v2i := v2.Index(i)
-		if c1.LessThan(v2i) {
-			return true
-		} else if GreaterThan(c1, v2i) {
-			return false
+		if !c1.EqualTo(v2i) {
+			return c1.LessThan(v2i)
 		}
 	}
 
@@ -552,7 +430,7 @@ func (c Map) LessThan(o reflect.Value) bool {
 	v2 := indirect(o)
 
 	if v2.Type().Kind() != reflect.Map {
-		return typeLessThan(v1.Type(), v2.Type())
+		return typeLessThan(v1, v2.Type())
 	}
 
 	if v1.Len() < v2.Len() {
@@ -583,6 +461,29 @@ func (c Map) LessThan(o reflect.Value) bool {
 
 type Struct reflect.Value
 
+type Lexicographical []string
+
+func (s Lexicographical) Len() int {
+	return len(s)
+}
+
+func (s Lexicographical) Less(i, j int) bool {
+	return s[i] < s[j]
+}
+
+func (s Lexicographical) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+func sortedFieldNames(t reflect.Type) []string {
+	names := make([]string, 0, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		names = append(names, t.Field(i).Name)
+	}
+	sort.Sort(Lexicographical(names))
+	return names
+}
+
 func (c Struct) EqualTo(o reflect.Value) bool {
 	v1 := reflect.Value(c)
 	v2 := indirect(o)
@@ -597,11 +498,17 @@ func (c Struct) EqualTo(o reflect.Value) bool {
 		return false
 	}
 
-	for i := 0; i < t1.NumField(); i++ {
-		f := t1.Field(i)
+	f1 := sortedFieldNames(t1)
+	f2 := sortedFieldNames(t2)
+	for i := range f1 {
+		if f1[i] != f2[i] {
+			return false
+		}
+	}
 
-		c1 := GetComparable(v1.FieldByName(f.Name))
-		if !c1.EqualTo(v2.FieldByName(f.Name)) {
+	for _, name := range f1 {
+		c1 := GetComparable(v1.FieldByName(name))
+		if !c1.EqualTo(v2.FieldByName(name)) {
 			return false
 		}
 	}
@@ -614,7 +521,7 @@ func (c Struct) LessThan(o reflect.Value) bool {
 	v2 := indirect(o)
 
 	if v2.Type().Kind() != reflect.Struct {
-		return typeLessThan(v1.Type(), v2.Type())
+		return typeLessThan(v1, v2.Type())
 	}
 
 	t1 := v1.Type()
@@ -625,19 +532,19 @@ func (c Struct) LessThan(o reflect.Value) bool {
 		return false
 	}
 
-	fields := make([]reflect.StructField, t1.NumField(), t1.NumField())
-	for i := 0; i < t1.NumField(); i++ {
-		fields[i] = t1.Field(i)
+	f1 := sortedFieldNames(t1)
+	f2 := sortedFieldNames(t2)
+	for i := range f1 {
+		if f1[i] != f2[i] {
+			return f1[i] < f2[i]
+		}
 	}
-	sort.Sort(FieldsByName(fields))
 
-	for _, f := range fields {
-		c1 := GetComparable(v1.FieldByName(f.Name))
-		v2i := v2.FieldByName(f.Name)
-		if c1.LessThan(v2i) {
-			return true
-		} else if GreaterThan(c1, v2i) {
-			return false
+	for _, name := range f1 {
+		c1 := GetComparable(v1.FieldByName(name))
+		f2 := v2.FieldByName(name)
+		if !c1.EqualTo(f2) {
+			return c1.LessThan(f2)
 		}
 	}
 
@@ -646,48 +553,28 @@ func (c Struct) LessThan(o reflect.Value) bool {
 
 func GetComparable(v reflect.Value) Comparable {
 	k := indirect(v).Type().Kind()
-	switch k {
-	case reflect.Bool:
+	switch {
+	case k == reflect.Bool:
 		return Bool(v)
-	case reflect.Int:
+	case isInt(k):
 		return Int(v)
-	case reflect.Int8:
-		return Int8(v)
-	case reflect.Int16:
-		return Int16(v)
-	case reflect.Int32:
-		return Int32(v)
-	case reflect.Int64:
-		return Int64(v)
-	case reflect.Uint:
+	case isUint(k):
 		return Uint(v)
-	case reflect.Uint8:
-		return Uint8(v)
-	case reflect.Uint16:
-		return Uint16(v)
-	case reflect.Uint32:
-		return Uint32(v)
-	case reflect.Uint64:
-		return Uint64(v)
-	case reflect.Uintptr:
+	case k == reflect.Uintptr:
 		return Uintptr(v)
-	case reflect.Float32:
-		return Float32(v)
-	case reflect.Float64:
-		return Float64(v)
-	case reflect.Complex64:
-		return Complex64(v)
-	case reflect.Complex128:
-		return Complex128(v)
-	case reflect.Array:
+	case isFloat(k):
+		return Float(v)
+	case isComplex(k):
+		return Complex(v)
+	case k == reflect.Array:
 		return Array{v}
-	case reflect.Slice:
+	case k == reflect.Slice:
 		return Slice{v}
-	case reflect.Map:
+	case k == reflect.Map:
 		return Map(v)
-	case reflect.String:
+	case k == reflect.String:
 		return String(v)
-	case reflect.Struct:
+	case k == reflect.Struct:
 		return Struct(v)
 	default:
 		return invalid
@@ -713,13 +600,6 @@ func FieldByName(v reflect.Value, name string) (reflect.Value, error) {
 type Functor interface {
 	F(...interface{}) (interface{}, error)
 }
-
-/*
-type Functor struct {
-	BasicFunctor
-	*ValueFunctor
-}
-*/
 
 func F(f Functor, args ...interface{}) (interface{}, error) {
 	return f.F(args...)
@@ -777,13 +657,6 @@ func ToFunctor(vf ValueFunctor) Functor {
 	}
 }
 
-/*
-type ValueFunctor struct {
-	BasicValueFunctor
-	*Functor
-}
-*/
-
 func VF(vf ValueFunctor, args ...reflect.Value) (reflect.Value, error) {
 	return vf.F(args...)
 }
@@ -811,7 +684,22 @@ func (m Method) F(args ...reflect.Value) (reflect.Value, error) {
 	if err != nil {
 		return method, err
 	}
-	return method.Call(args[1:])[0], nil
+
+	mArgs := args[1:]
+	mt := method.Type()
+	if len(mArgs) != mt.NumIn() && !mt.IsVariadic() {
+		return args[0], fmt.Errorf("Method %s expected %d arguments but got %d", m.MethodName, mt.NumIn(), len(mArgs))
+	}
+
+	for i, a := range mArgs {
+		at := a.Type()
+		mat := mt.In(i)
+		if !at.ConvertibleTo(mat) {
+			return a, fmt.Errorf("Method %s expected %dth arguments be convertible to %s but got %s", m.MethodName, i, mat.PkgPath()+"/"+mat.Name(), at.PkgPath()+"/"+at.Name())
+		}
+	}
+
+	return method.Call(mArgs)[0], nil
 }
 
 type Dot struct {
@@ -861,6 +749,22 @@ type Gte struct{}
 
 func (c Gte) F(args ...reflect.Value) (reflect.Value, error) {
 	return reflect.ValueOf(GreaterThanOrEqualTo(GetComparable(args[0]), args[1])), nil
+}
+
+type Unary struct {
+	Op  ValueFunctor `json:"op"`
+	Arg ValueFunctor `json:"arg"`
+}
+
+type UnaryLazyArg Unary
+
+func (c UnaryLazyArg) F(args ...reflect.Value) (reflect.Value, error) {
+	allArgs := make([]reflect.Value, 0, len(args)+1)
+	allArgs = append(allArgs, reflect.ValueOf(c.Arg))
+	for _, a := range args {
+		allArgs = append(allArgs, a)
+	}
+	return c.Op.F(allArgs...)
 }
 
 type Binary struct {
@@ -938,21 +842,21 @@ func GTE(lhs, rhs ValueFunctor) ValueFunctor {
 	}
 }
 
-type AndOp struct{}
+type And struct{}
 
-func (AndOp) F(args ...reflect.Value) (reflect.Value, error) {
+func (And) F(args ...reflect.Value) (reflect.Value, error) {
 	return reflect.ValueOf(args[0].Bool() && args[1].Bool()), nil
 }
 
-type OrOp struct{}
+type Or struct{}
 
-func (OrOp) F(args ...reflect.Value) (reflect.Value, error) {
+func (Or) F(args ...reflect.Value) (reflect.Value, error) {
 	return reflect.ValueOf(args[0].Bool() || args[1].Bool()), nil
 }
 
 var (
-	and = AndOp{}
-	or  = OrOp{}
+	and = And{}
+	or  = Or{}
 )
 
 func AND(lhs, rhs ValueFunctor) ValueFunctor {
@@ -971,23 +875,40 @@ func OR(lhs, rhs ValueFunctor) ValueFunctor {
 	}
 }
 
-type Distinct struct {
-	Arg ValueFunctor `json:"distinct"`
-}
+type Distinct struct{}
 
 func (d Distinct) F(args ...reflect.Value) (reflect.Value, error) {
-	seen := make(map[interface{}]bool)
-	results := reflect.MakeSlice(reflect.TypeOf(args[0]), 0, 0)
+	if len(args) < 2 {
+		return args[0], errors.New("Too few args passed to Distinct.F(); expected at least arg ValueFunctor, data []T")
+	}
 
-	for _, v := range args {
-		kv, err := d.Arg.F(v)
+	arg, ok := args[0].Interface().(ValueFunctor)
+	if !ok {
+		t := args[0].Type()
+		tn := t.PkgPath() + "/" + t.Name()
+		return args[0], fmt.Errorf("Expected ValueFunctor as first argument for Distinct.F(), but got %s", tn)
+	}
+
+	dv := args[1]
+	dt := dv.Type()
+	if dt.Kind() != reflect.Slice {
+		dn := dt.PkgPath() + "/" + dt.Name()
+		return args[0], fmt.Errorf("Expected []T as second argument for Distinct, but got %s", dn)
+	}
+
+	seen := make(map[interface{}]bool)
+	results := reflect.MakeSlice(dt, 0, dv.Len())
+	for i := 0; i < dv.Len(); i++ {
+		v := dv.Index(i)
+		argv, err := arg.F(v)
+
 		if err != nil {
-			return kv, err
+			return v, err
 		}
 
-		k := kv.Interface()
-		if _, ok := seen[k]; !ok {
-			seen[k] = true
+		i := argv.Interface()
+		if _, ok := seen[i]; !ok {
+			seen[i] = true
 			results = reflect.Append(results, v)
 		}
 	}
@@ -995,14 +916,43 @@ func (d Distinct) F(args ...reflect.Value) (reflect.Value, error) {
 	return results, nil
 }
 
+var distinct = Distinct{}
+
 func DISTINCT(arg ValueFunctor) ValueFunctor {
-	return Distinct{arg}
+	return UnaryLazyArg{
+		Op:  distinct,
+		Arg: arg,
+	}
+}
+
+type UnaryJSON struct {
+	Op  string          `json:"op"`
+	Arg json.RawMessage `json:"arg"`
 }
 
 type BinaryJSON struct {
 	LHS json.RawMessage `json:"lhs"`
 	Op  string          `json:"op"`
 	RHS json.RawMessage `json:"rhs"`
+}
+
+func (u *UnaryLazyArg) UnmarshalJSON(bs []byte) error {
+	var raw UnaryJSON
+	if err := json.Unmarshal(bs, &raw); err != nil {
+		return err
+	}
+	var arg MValueFunctor
+	if err := json.Unmarshal(raw.Arg, &arg); err != nil {
+		return err
+	}
+	u.Arg = arg.ValueFunctor
+	switch raw.Op {
+	case "distinct":
+		u.Op = distinct
+	default:
+		return fmt.Errorf("Unknown unary operation: \"%s\"", raw.Op)
+	}
+	return nil
 }
 
 func (b *Binary) UnmarshalJSON(bs []byte) error {
@@ -1033,6 +983,10 @@ func (b *Binary) UnmarshalJSON(bs []byte) error {
 		b.Op = gt
 	case "gte":
 		b.Op = gte
+	case "and":
+		b.Op = and
+	case "or":
+		b.Op = or
 	default:
 		return fmt.Errorf("Unknown binary operation: \"%s\"", raw.Op)
 	}
@@ -1044,6 +998,11 @@ type MValueFunctor struct {
 }
 
 func (mvf *MValueFunctor) UnmarshalJSON(bs []byte) error {
+	var ula UnaryLazyArg
+	if err := json.Unmarshal(bs, &ula); err == nil && ula.Arg != nil {
+		mvf.ValueFunctor = ula
+		return nil
+	}
 	var b Binary
 	if err := json.Unmarshal(bs, &b); err == nil {
 		mvf.ValueFunctor = b
@@ -1059,11 +1018,6 @@ func (mvf *MValueFunctor) UnmarshalJSON(bs []byte) error {
 		mvf.ValueFunctor = d
 		return nil
 	}
-	var dis Distinct
-	if err := json.Unmarshal(bs, &dis); err == nil && dis.Arg != nil {
-		mvf.ValueFunctor = dis
-		return nil
-	}
 	var m Method
 	if err := json.Unmarshal(bs, &m); err == nil && m.MethodName != "" {
 		mvf.ValueFunctor = m
@@ -1075,7 +1029,7 @@ func (mvf *MValueFunctor) UnmarshalJSON(bs []byte) error {
 		return nil
 	}
 
-	return fmt.Errorf("Failed to unmarshal one of %v from %s", []interface{}{b, p, d, dis, m, c}, string(bs))
+	return fmt.Errorf("Failed to unmarshal one of %v from %s", []interface{}{ula, b, p, d, m, c}, string(bs))
 }
 
 func (c *Constant) UnmarshalJSON(bs []byte) error {
@@ -1095,10 +1049,46 @@ func (c *Constant) UnmarshalJSON(bs []byte) error {
 	return fmt.Errorf("Failed to unmarshal one of %v from %s", vs, string(bs))
 }
 
+func (mvf MValueFunctor) MarshalJSON() ([]byte, error) {
+	return json.Marshal(mvf.ValueFunctor)
+}
+
 func (c Constant) MarshalJSON() ([]byte, error) {
 	return json.Marshal(reflect.Value(c).Interface())
 }
 
+func (o Distinct) MarshalJSON() ([]byte, error) {
+	return []byte(`"distinct"`), nil
+}
+
+func (o Eq) MarshalJSON() ([]byte, error) {
+	return []byte(`"eq"`), nil
+}
+
 func (o Neq) MarshalJSON() ([]byte, error) {
 	return []byte(`"neq"`), nil
+}
+
+func (o Lt) MarshalJSON() ([]byte, error) {
+	return []byte(`"lt"`), nil
+}
+
+func (o Lte) MarshalJSON() ([]byte, error) {
+	return []byte(`"lte"`), nil
+}
+
+func (o Gt) MarshalJSON() ([]byte, error) {
+	return []byte(`"gt"`), nil
+}
+
+func (o Gte) MarshalJSON() ([]byte, error) {
+	return []byte(`"gte"`), nil
+}
+
+func (o And) MarshalJSON() ([]byte, error) {
+	return []byte(`"and"`), nil
+}
+
+func (o Or) MarshalJSON() ([]byte, error) {
+	return []byte(`"or"`), nil
 }
