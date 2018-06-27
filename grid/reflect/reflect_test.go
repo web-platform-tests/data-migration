@@ -6,6 +6,7 @@ import (
 	"math"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	r "github.com/web-platform-tests/data-migration/grid/reflect"
@@ -150,6 +151,14 @@ func TestStructComparable(t *testing.T) {
 	testComparator(t, v(employee{1, "Alice"}), v(employee{2, "Bob"}))
 }
 
+func TestTimeComparable(t *testing.T) {
+	oneHourEastOfUTC := time.FixedZone("UTC+1", 60*60)
+	oneHourWestOfUTC := time.FixedZone("UTC-1", -60*60)
+	lesser := time.Date(2018, 1, 1, 0, 0, 0, 0, oneHourEastOfUTC)
+	greater := time.Date(2018, 1, 1, 0, 0, 0, 0, oneHourWestOfUTC)
+	testComparator(t, v(lesser), v(greater))
+}
+
 func TestPropertyFunctor(t *testing.T) {
 	a := v(employee{1, "Alice"})
 	v, err := r.Property{
@@ -258,6 +267,26 @@ func TestDistinct(t *testing.T) {
 	assert.Equal(t, 2, len(res))
 	assert.Equal(t, alice, res[0])
 	assert.Equal(t, bob, res[1])
+}
+
+func TestIndex(t *testing.T) {
+	result, err := r.INDEX(c(2)).F(v([]string{"0", "1", "2"}))
+	assert.Nil(t, err)
+	res, ok := result.Interface().(string)
+	assert.True(t, ok)
+	assert.Equal(t, "2", res)
+
+	_, err = r.INDEX(c(2)).F(v([]string{"0", "1"}))
+	assert.NotNil(t, err)
+
+	_, err = r.INDEX(c(-1)).F(v([]int{}))
+	assert.NotNil(t, err)
+
+	_, err = r.INDEX(c(struct{}{})).F(v([]int{}))
+	assert.NotNil(t, err)
+
+	_, err = r.INDEX(c(0)).F(v(struct{}{}))
+	assert.NotNil(t, err)
 }
 
 func testMarshalSymmetry(t *testing.T, data string, value interface{}) {

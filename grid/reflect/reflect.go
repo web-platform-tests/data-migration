@@ -8,6 +8,7 @@ import (
 	"math/cmplx"
 	"reflect"
 	"sort"
+	"time"
 )
 
 type Value reflect.Value
@@ -551,6 +552,32 @@ func (c Struct) LessThan(o reflect.Value) bool {
 	return false
 }
 
+type Time reflect.Value
+
+func isTime(v reflect.Value) bool {
+	ot := v.Type()
+	return ot.PkgPath() == "time" && ot.Name() == "Time"
+}
+
+func (t Time) LessThan(o reflect.Value) bool {
+	v := indirect(o)
+	if isTime(v) {
+		rv := reflect.Value(t).MethodByName("Before").Call([]reflect.Value{o})[0]
+		return rv.Bool()
+	}
+	return typeLessThan(reflect.Value(t), v.Type())
+}
+
+func (t Time) EqualTo(o reflect.Value) bool {
+	v := indirect(o)
+	ot := v.Type()
+	if ot.PkgPath() == "time" || ot.Name() == "Time" {
+		rv := reflect.Value(t).MethodByName("Equal").Call([]reflect.Value{o})[0]
+		return rv.Bool()
+	}
+	return false
+}
+
 func GetComparable(v reflect.Value) Comparable {
 	k := indirect(v).Type().Kind()
 	switch {
@@ -575,7 +602,11 @@ func GetComparable(v reflect.Value) Comparable {
 	case k == reflect.String:
 		return String(v)
 	case k == reflect.Struct:
-		return Struct(v)
+		if isTime(v) {
+			return Time(v)
+		} else {
+			return Struct(v)
+		}
 	default:
 		return invalid
 	}
@@ -659,6 +690,59 @@ func ToFunctor(vf ValueFunctor) Functor {
 
 func VF(vf ValueFunctor, args ...reflect.Value) (reflect.Value, error) {
 	return vf.F(args...)
+}
+
+type ValueFunctorPair struct {
+	reflect.Value
+	ValueFunctor
+}
+
+type Desc struct {
+	ValueFunctor
+}
+
+func DESC(vf ValueFunctor) ValueFunctor {
+	if d, ok := vf.(Desc); ok {
+		return d.ValueFunctor
+	} else {
+		return Desc{vf}
+	}
+}
+
+func FunctorSort(s []reflect.Value, vf ValueFunctor) []reflect.Value {
+	cvfs := make([]ValueFunctorPair, 0, len(s))
+	for _, v := range s {
+		cvfs = append(cvfs, ValueFunctorPair{
+			Value:        v,
+			ValueFunctor: vf,
+		})
+	}
+	sort.Sort(ByFunctor(cvfs))
+	if _, ok := vf.(Desc); ok {
+		sort.Sort(sort.Reverse(ByFunctor(cvfs)))
+	} else {
+		sort.Sort(ByFunctor(cvfs))
+	}
+	for i := range cvfs {
+		s[i] = cvfs[i].Value
+	}
+	return s
+}
+
+type ByFunctor []ValueFunctorPair
+
+func (s ByFunctor) Len() int {
+	return len(s)
+}
+
+func (s ByFunctor) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+func (s ByFunctor) Less(i, j int) bool {
+	vi, _ := s[i].ValueFunctor.F(s[i].Value)
+	vk, _ := s[j].ValueFunctor.F(s[j].Value)
+	return GetComparable(vi).LessThan(vk)
 }
 
 type Constant reflect.Value
@@ -893,7 +977,7 @@ func (d Distinct) F(args ...reflect.Value) (reflect.Value, error) {
 	dt := dv.Type()
 	if dt.Kind() != reflect.Slice {
 		dn := dt.PkgPath() + "/" + dt.Name()
-		return args[0], fmt.Errorf("Expected []T as second argument for Distinct, but got %s", dn)
+		return args[0], fmt.Errorf("Expected []T as second argument for Distinct.F(), but got %s", dn)
 	}
 
 	seen := make(map[interface{}]bool)
@@ -925,6 +1009,56 @@ func DISTINCT(arg ValueFunctor) ValueFunctor {
 	}
 }
 
+type Index struct{}
+
+func (i Index) F(args ...reflect.Value) (reflect.Value, error) {
+	if len(args) < 2 {
+		return args[0], errors.New("Too few args passed to Index.F(); expected at least arg ValueFunctor, data []T")
+	}
+
+	arg, ok := args[0].Interface().(ValueFunctor)
+	if !ok {
+		t := args[0].Type()
+		tn := t.PkgPath() + "/" + t.Name()
+		return args[0], fmt.Errorf("Expected ValueFunctor as first argument for Index.F(), but got %s", tn)
+	}
+
+	dv := args[len(args)-1]
+	dt := dv.Type()
+	if dt.Kind() != reflect.Slice {
+		dn := dt.PkgPath() + "/" + dt.Name()
+		return args[0], fmt.Errorf("Expected []T as last argument for Index.F(), but got %s", dn)
+	}
+
+	argv, err := arg.F(args[1 : len(args)-1]...)
+	if err != nil {
+		return args[0], err
+	}
+
+	idx, ok := argv.Interface().(int)
+	if !ok {
+		t := argv.Type()
+		tn := t.PkgPath() + "/" + t.Name()
+		return args[0], fmt.Errorf("Expected int from Index.Arg.F(), but got %s", tn)
+	}
+
+	dvl := dv.Len()
+	if idx < 0 || idx >= dvl {
+		return args[0], fmt.Errorf("Index computed from Index.F(), %d, out of bounds (len=%d)", idx, dvl)
+	}
+
+	return dv.Index(idx), nil
+}
+
+var index = Index{}
+
+func INDEX(arg ValueFunctor) ValueFunctor {
+	return UnaryLazyArg{
+		Op:  index,
+		Arg: arg,
+	}
+}
+
 type UnaryJSON struct {
 	Op  string          `json:"op"`
 	Arg json.RawMessage `json:"arg"`
@@ -949,6 +1083,8 @@ func (u *UnaryLazyArg) UnmarshalJSON(bs []byte) error {
 	switch raw.Op {
 	case "distinct":
 		u.Op = distinct
+	case "index":
+		u.Op = index
 	default:
 		return fmt.Errorf("Unknown unary operation: \"%s\"", raw.Op)
 	}
@@ -1037,6 +1173,7 @@ func (c *Constant) UnmarshalJSON(bs []byte) error {
 		int(0),
 		float32(0),
 		false,
+		time.Time{},
 		"",
 	}
 	// TODO(markdittmer): Handle null values.
@@ -1055,6 +1192,10 @@ func (mvf MValueFunctor) MarshalJSON() ([]byte, error) {
 
 func (c Constant) MarshalJSON() ([]byte, error) {
 	return json.Marshal(reflect.Value(c).Interface())
+}
+
+func (o Index) MarshalJSON() ([]byte, error) {
+	return []byte(`"index"`), nil
 }
 
 func (o Distinct) MarshalJSON() ([]byte, error) {
