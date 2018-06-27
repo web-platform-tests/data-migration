@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"go/types"
+	"log"
 	"math/cmplx"
 	"reflect"
 	"sort"
@@ -240,6 +241,7 @@ type Uint8 Value
 func (c Uint8) EqualTo(o reflect.Value) bool {
 	v := indirect(o)
 	if v.Type().Kind() == reflect.Uint8 {
+		log.Printf("%d %d", reflect.Value(c).Uint(), v.Uint())
 		return reflect.Value(c).Uint() == v.Uint()
 	}
 	return false
@@ -504,6 +506,18 @@ func (c Slice) LessThan(o reflect.Value) bool {
 
 type Map reflect.Value
 
+func sortedMapKeys(m reflect.Value) []ComparableValue {
+	cks := make([]ComparableValue, 0, len(m.MapKeys()))
+	for _, k := range m.MapKeys() {
+		cks = append(cks, ComparableValue{
+			Comparable: GetComparable(k),
+			Value:      k,
+		})
+	}
+	sort.Sort(ByComparison(cks))
+	return cks
+}
+
 func (c Map) EqualTo(o reflect.Value) bool {
 	v1 := reflect.Value(c)
 	v2 := indirect(o)
@@ -515,9 +529,17 @@ func (c Map) EqualTo(o reflect.Value) bool {
 		return false
 	}
 
-	for _, k := range v1.MapKeys() {
-		c1 := GetComparable(v1.MapIndex(k))
-		if !c1.EqualTo(v2.MapIndex(k)) {
+	cks1 := sortedMapKeys(v1)
+	cks2 := sortedMapKeys(v2)
+	for i := 0; i < len(cks1); i++ {
+		if !cks1[i].Comparable.EqualTo(cks2[i].Value) {
+			return false
+		}
+	}
+	for _, ck := range cks1 {
+		mv1 := v1.MapIndex(ck.Value)
+		mv2 := v2.MapIndex(ck.Value)
+		if !GetComparable(mv1).EqualTo(mv2) {
 			return false
 		}
 	}
@@ -539,26 +561,20 @@ func (c Map) LessThan(o reflect.Value) bool {
 		return false
 	}
 
-	ks := v1.MapKeys()
-	cs := make([]ComparableValue, 0, len(ks))
-	for _, k := range ks {
-		cs = append(cs, ComparableValue{
-			GetComparable(k),
-			k,
-		})
+	cks1 := sortedMapKeys(v1)
+	cks2 := sortedMapKeys(v2)
+	for i := 0; i < len(cks1); i++ {
+		c := cks1[i].Comparable
+		if !c.EqualTo(cks2[i].Value) {
+			return c.LessThan(cks2[i].Value)
+		}
 	}
-	sort.Sort(ByComparison(cs))
-	for i, c := range cs {
-		ks[i] = c.Value
-	}
-
-	for _, k := range v1.MapKeys() {
-		c1 := GetComparable(v1.MapIndex(k))
-		v2i := v2.MapIndex(k)
-		if c1.LessThan(v2i) {
-			return true
-		} else if GreaterThan(c1, v2i) {
-			return false
+	for _, ck := range cks1 {
+		mv1 := v1.MapIndex(ck.Value)
+		mv2 := v2.MapIndex(ck.Value)
+		c := GetComparable(mv1)
+		if !c.EqualTo(mv2) {
+			return c.LessThan(mv2)
 		}
 	}
 
@@ -631,6 +647,8 @@ func (c Struct) LessThan(o reflect.Value) bool {
 func GetComparable(v reflect.Value) Comparable {
 	k := indirect(v).Type().Kind()
 	switch k {
+	case reflect.Bool:
+		return Bool(v)
 	case reflect.Int:
 		return Int(v)
 	case reflect.Int8:
