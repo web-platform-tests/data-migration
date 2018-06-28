@@ -254,7 +254,9 @@ func (t STTest) match(q string) bool {
 	}
 	st := t.st
 	head := make(map[rune]*STNode)
-	head[st.r] = st
+	for k, v := range st.cs {
+		head[k] = v
+	}
 	for _, r := range q {
 		n := head[r]
 		if n == nil {
