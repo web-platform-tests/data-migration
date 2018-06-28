@@ -692,11 +692,6 @@ func VF(vf ValueFunctor, args ...reflect.Value) (reflect.Value, error) {
 	return vf.F(args...)
 }
 
-type ValueFunctorPair struct {
-	reflect.Value
-	ValueFunctor
-}
-
 type Desc struct {
 	ValueFunctor
 }
