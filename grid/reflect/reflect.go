@@ -1,6 +1,7 @@
 package reflect
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1063,6 +1064,10 @@ func INDEX(arg ValueFunctor) ValueFunctor {
 	}
 }
 
+type DescJSON struct {
+	Desc json.RawMessage `json:"desc"`
+}
+
 type UnaryJSON struct {
 	Op  string          `json:"op"`
 	Arg json.RawMessage `json:"arg"`
@@ -1072,6 +1077,23 @@ type BinaryJSON struct {
 	LHS json.RawMessage `json:"lhs"`
 	Op  string          `json:"op"`
 	RHS json.RawMessage `json:"rhs"`
+}
+
+func (d *Desc) UnmarshalJSON(bs []byte) error {
+	var raw DescJSON
+	if err := json.Unmarshal(bs, &raw); err != nil {
+		return err
+	}
+	if len(raw.Desc) == 0 {
+		return errors.New(`Desc with empty "desc" field`)
+	}
+
+	var mvf MValueFunctor
+	if err := json.Unmarshal(raw.Desc, &mvf); err != nil {
+		return err
+	}
+	d.ValueFunctor = mvf.ValueFunctor
+	return nil
 }
 
 func (u *UnaryLazyArg) UnmarshalJSON(bs []byte) error {
@@ -1153,9 +1175,14 @@ func (mvf *MValueFunctor) UnmarshalJSON(bs []byte) error {
 		mvf.ValueFunctor = p
 		return nil
 	}
-	var d Dot
-	if err := json.Unmarshal(bs, &d); err == nil && d.First.PropertyName != "" && d.Second.PropertyName != "" {
+	var d Desc
+	if err := json.Unmarshal(bs, &d); err == nil && d.ValueFunctor != nil {
 		mvf.ValueFunctor = d
+		return nil
+	}
+	var dot Dot
+	if err := json.Unmarshal(bs, &dot); err == nil && dot.First.PropertyName != "" && dot.Second.PropertyName != "" {
+		mvf.ValueFunctor = dot
 		return nil
 	}
 	var m Method
@@ -1196,6 +1223,24 @@ func (mvf MValueFunctor) MarshalJSON() ([]byte, error) {
 
 func (c Constant) MarshalJSON() ([]byte, error) {
 	return json.Marshal(reflect.Value(c).Interface())
+}
+
+func (d Desc) MarshalJSON() ([]byte, error) {
+	var b bytes.Buffer
+	_, err := b.WriteString(`{"desc":`)
+	if err != nil {
+		return nil, err
+	}
+	inner, err := json.Marshal(d.ValueFunctor)
+	if err != nil {
+		return nil, err
+	}
+	_, err = b.Write(inner)
+	if err != nil {
+		return nil, err
+	}
+	b.WriteString("}")
+	return b.Bytes(), nil
 }
 
 func (o Index) MarshalJSON() ([]byte, error) {

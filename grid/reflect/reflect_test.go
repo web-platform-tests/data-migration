@@ -324,6 +324,16 @@ func TestMarshalProperty(t *testing.T) {
 	assert.True(t, ok)
 }
 
+func TestMarshalDesc(t *testing.T) {
+	data := `{"desc":{"property_name":"Name"}}`
+	var value r.MValueFunctor
+	testMarshalSymmetry(t, data, &value)
+	d, ok := value.ValueFunctor.(r.Desc)
+	assert.True(t, ok)
+	_, ok = d.ValueFunctor.(r.Property)
+	assert.True(t, ok)
+}
+
 func TestMarshalMethod(t *testing.T) {
 	data := `{"method_name":"HexID"}`
 	var value r.MValueFunctor
@@ -337,7 +347,7 @@ type marshalOp struct {
 	Exemplar interface{}
 }
 
-var marshalOps = []marshalOp{
+var marshalBinaryOps = []marshalOp{
 	marshalOp{"eq", r.Eq{}},
 	marshalOp{"neq", r.Neq{}},
 	marshalOp{"lt", r.Lt{}},
@@ -349,16 +359,12 @@ var marshalOps = []marshalOp{
 }
 
 func TestMarshalBinary(t *testing.T) {
-	for _, op := range marshalOps {
+	for _, op := range marshalBinaryOps {
 		data := `{"lhs":{"property_name":"IsSomething"},"op":"` + op.OpName + `","rhs":true}`
 		var value r.MValueFunctor
 		testMarshalSymmetry(t, data, &value)
 		b, ok := value.ValueFunctor.(r.Binary)
-		if ok {
-			assert.True(t, ok)
-		} else {
-			assert.True(t, ok)
-		}
+		assert.True(t, ok)
 		_, ok = b.LHS.(r.Property)
 		assert.True(t, ok)
 		_, ok = b.RHS.(r.Constant)
@@ -367,13 +373,24 @@ func TestMarshalBinary(t *testing.T) {
 	}
 }
 
-func TestMarshalDistinct(t *testing.T) {
-	data := `{"op":"distinct","arg":{"property_name":"IsSomething"}}`
-	var value r.MValueFunctor
-	testMarshalSymmetry(t, data, &value)
-	ula, ok := value.ValueFunctor.(r.UnaryLazyArg)
-	_, ok = ula.Op.(r.Distinct)
-	assert.True(t, ok)
-	_, ok = ula.Arg.(r.Property)
-	assert.True(t, ok)
+var marshalUnaryOps = []marshalOp{
+	marshalOp{"distinct", r.Distinct{}},
+	marshalOp{"index", r.Index{}},
+}
+
+func TestMarshalUnary(t *testing.T) {
+	for _, op := range marshalUnaryOps {
+		data := `{"op":"` + op.OpName + `","arg":{"property_name":"IsSomething"}}`
+		var value r.MValueFunctor
+		testMarshalSymmetry(t, data, &value)
+		u, ok := value.ValueFunctor.(r.UnaryLazyArg)
+		if ok {
+			assert.True(t, ok)
+		} else {
+			assert.True(t, ok)
+		}
+		_, ok = u.Arg.(r.Property)
+		assert.True(t, ok)
+		assert.True(t, reflect.TypeOf(u.Op).ConvertibleTo(reflect.TypeOf(op.Exemplar)))
+	}
 }
