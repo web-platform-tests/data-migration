@@ -289,6 +289,25 @@ func TestIndex(t *testing.T) {
 	assert.NotNil(t, err)
 }
 
+func TestDesc(t *testing.T) {
+	emps := []employee{
+		employee{ID: 1, Name: "Charlie"},
+		employee{ID: 2, Name: "Alice"},
+		employee{ID: 3, Name: "Bob"},
+	}
+	v, err := r.FunctorSort(r.DESC(r.Property{
+		PropertyName: "Name",
+	}), v(emps))
+	assert.Nil(t, err)
+	emps, ok := v.Interface().([]employee)
+	assert.True(t, ok)
+	assert.Equal(t, []employee{
+		employee{ID: 1, Name: "Charlie"},
+		employee{ID: 3, Name: "Bob"},
+		employee{ID: 2, Name: "Alice"},
+	}, emps)
+}
+
 func testMarshalSymmetry(t *testing.T, data string, value interface{}) {
 	err := json.Unmarshal([]byte(data), value)
 	assert.Nil(t, err)

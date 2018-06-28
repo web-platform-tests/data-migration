@@ -709,40 +709,49 @@ func DESC(vf ValueFunctor) ValueFunctor {
 	}
 }
 
-func FunctorSort(s []reflect.Value, vf ValueFunctor) []reflect.Value {
-	cvfs := make([]ValueFunctorPair, 0, len(s))
-	for _, v := range s {
-		cvfs = append(cvfs, ValueFunctorPair{
-			Value:        v,
+func FunctorSort(vf ValueFunctor, s reflect.Value) (reflect.Value, error) {
+	st := s.Type()
+	if st.Kind() != reflect.Slice {
+		stn := st.PkgPath() + "/" + st.Name()
+		return s, fmt.Errorf("Expected second argument of FunctorSort to be slice value, but got %s value", stn)
+	}
+
+	if _, ok := vf.(Desc); ok {
+		sort.Sort(sort.Reverse(ByFunctor{
+			Values:       s,
+			ValueFunctor: vf,
+		}))
+	} else {
+		sort.Sort(ByFunctor{
+			Values:       s,
 			ValueFunctor: vf,
 		})
 	}
-	sort.Sort(ByFunctor(cvfs))
-	if _, ok := vf.(Desc); ok {
-		sort.Sort(sort.Reverse(ByFunctor(cvfs)))
-	} else {
-		sort.Sort(ByFunctor(cvfs))
-	}
-	for i := range cvfs {
-		s[i] = cvfs[i].Value
-	}
-	return s
+	return s, nil
 }
 
-type ByFunctor []ValueFunctorPair
-
-func (s ByFunctor) Len() int {
-	return len(s)
+type ByFunctor struct {
+	Values reflect.Value
+	ValueFunctor
 }
 
-func (s ByFunctor) Swap(i, j int) {
-	s[i], s[j] = s[j], s[i]
+func (bf ByFunctor) Len() int {
+	return bf.Values.Len()
 }
 
-func (s ByFunctor) Less(i, j int) bool {
-	vi, _ := s[i].ValueFunctor.F(s[i].Value)
-	vk, _ := s[j].ValueFunctor.F(s[j].Value)
-	return GetComparable(vi).LessThan(vk)
+func (bf ByFunctor) Swap(i, j int) {
+	// Get copy of value by making it concrete, and taking value again.
+	vi := reflect.ValueOf(bf.Values.Index(i).Interface())
+
+	bf.Values.Index(i).Set(bf.Values.Index(j))
+	bf.Values.Index(j).Set(vi)
+}
+
+func (bf ByFunctor) Less(i, j int) bool {
+	v1, _ := bf.ValueFunctor.F(bf.Values.Index(i))
+	v2, _ := bf.ValueFunctor.F(bf.Values.Index(j))
+	c := GetComparable(v1)
+	return c.LessThan(v2)
 }
 
 type Constant reflect.Value
