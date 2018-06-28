@@ -9,6 +9,8 @@ type Key struct {
 
 type Value split.TestStatus
 
+type Query split.Query
+
 type KeyValue struct {
 	Key
 	Value

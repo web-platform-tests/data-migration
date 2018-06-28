@@ -756,6 +756,19 @@ func (c Constant) F(args ...reflect.Value) (reflect.Value, error) {
 	return reflect.Value(c), nil
 }
 
+type Identity struct{}
+
+func (Identity) F(args ...reflect.Value) (reflect.Value, error) {
+	return args[0], nil
+}
+
+var TRUE = Constant(reflect.ValueOf(true))
+var FALSE = Constant(reflect.ValueOf(true))
+var ZERO = Constant(reflect.ValueOf(0))
+var INT_MAX = Constant(reflect.ValueOf(int(^uint(0) >> 1)))
+var UINT_MAX = Constant(reflect.ValueOf(^uint(0)))
+var IDENTITY = Identity{}
+
 type Property struct {
 	PropertyName string `json:"property_name"`
 }
