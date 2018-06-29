@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"go/types"
+	"log"
 	"math/cmplx"
 	"reflect"
 	"sort"
@@ -869,6 +870,28 @@ func (c UnaryLazyArg) F(args ...reflect.Value) (reflect.Value, error) {
 	return c.Op.F(allArgs...)
 }
 
+type UnaryEagerArg Unary
+
+func (c UnaryEagerArg) F(args ...reflect.Value) (reflect.Value, error) {
+	allArgs := make([]reflect.Value, 0, len(args)+1)
+	argv, err := c.Arg.F(args...)
+	if err != nil {
+		return args[0], err
+	}
+	allArgs = append(allArgs, argv)
+	for _, a := range args {
+		allArgs = append(allArgs, a)
+	}
+
+	ts := make([]reflect.Type, 0, len(allArgs))
+	for _, a := range allArgs {
+		ts = append(ts, a.Type())
+	}
+	log.Printf("INFO: UnaryEagerArg.Op.F(%v)", ts)
+
+	return c.Op.F(allArgs...)
+}
+
 type Binary struct {
 	LHS ValueFunctor `json:"lhs"`
 	Op  ValueFunctor `json:"op"`
@@ -876,14 +899,40 @@ type Binary struct {
 }
 
 func (b Binary) F(args ...reflect.Value) (reflect.Value, error) {
+	if b.LHS == nil {
+		if len(args) == 0 {
+			return reflect.ValueOf(b), errors.New("Binary.F() invoked without Binary.LHS binding")
+		}
+		vf, ok := args[0].Interface().(ValueFunctor)
+		if ok {
+			b.LHS = vf
+		} else {
+			b.LHS = Constant(args[0])
+		}
+		args = args[1:]
+	}
 	l, err := b.LHS.F(args...)
 	if err != nil {
 		return l, err
+	}
+
+	if b.RHS == nil {
+		if len(args) == 0 {
+			return reflect.ValueOf(b), errors.New("Binary.F() invoked without Binary.LHS binding")
+		}
+		vf, ok := args[0].Interface().(ValueFunctor)
+		if ok {
+			b.RHS = vf
+		} else {
+			b.RHS = Constant(args[0])
+		}
+		args = args[1:]
 	}
 	r, err := b.RHS.F(args...)
 	if err != nil {
 		return r, err
 	}
+
 	return b.Op.F(l, r)
 }
 
@@ -1027,6 +1076,112 @@ func DISTINCT(arg ValueFunctor) ValueFunctor {
 	}
 }
 
+type Any struct{}
+
+func (d Any) F(args ...reflect.Value) (reflect.Value, error) {
+	if len(args) < 2 {
+		return args[0], errors.New("Too few args passed to Any.F(); expected at least arg ValueFunctor, data []T")
+	}
+
+	arg, ok := args[0].Interface().(ValueFunctor)
+	if !ok {
+		t := args[0].Type()
+		tn := t.PkgPath() + "/" + t.Name()
+		return args[0], fmt.Errorf("Expected ValueFunctor as first argument for Any.F(), but got %s", tn)
+	}
+
+	dv := args[1]
+	dt := dv.Type()
+	if dt.Kind() != reflect.Slice {
+		dn := dt.PkgPath() + "/" + dt.Name()
+		return args[0], fmt.Errorf("Expected []T as second argument for Any.F(), but got %s", dn)
+	}
+
+	vArgs := make([]reflect.Value, 1, len(args)-1)
+	log.Printf("INFO: Any.F(): Functor in foreach: %v; slice of foreach of type %v; first-unbound args foreach functor args: %v", arg, dv.Type(), vArgs)
+
+	if len(args) > 2 {
+		vArgs = append(vArgs, args[2:]...)
+	}
+	for i := 0; i < dv.Len(); i++ {
+		v := dv.Index(i)
+		log.Printf("INFO: Any.F(): Last functor arg: %v of type %v", v, v.Type())
+
+		vArgs[0] = v
+		res, err := arg.F(vArgs...)
+		if err != nil {
+			return args[0], err
+		}
+
+		b, ok := res.Interface().(bool)
+		if !ok {
+			return args[0], fmt.Errorf("Expected bool result from Any.Arg.F(), but got %v", v.Type())
+		}
+		if b {
+			return reflect.ValueOf(true), nil
+		}
+	}
+
+	return reflect.ValueOf(false), nil
+}
+
+var any = Any{}
+
+func ANY(arg ValueFunctor) ValueFunctor {
+	return UnaryLazyArg{
+		Op:  any,
+		Arg: arg,
+	}
+}
+
+type All struct{}
+
+func (d All) F(args ...reflect.Value) (reflect.Value, error) {
+	if len(args) < 2 {
+		return args[0], errors.New("Too few args passed to All.F(); expected at least arg ValueFunctor, data []T")
+	}
+
+	arg, ok := args[0].Interface().(ValueFunctor)
+	if !ok {
+		t := args[0].Type()
+		tn := t.PkgPath() + "/" + t.Name()
+		return args[0], fmt.Errorf("Expected ValueFunctor as first argument for All.F(), but got %s", tn)
+	}
+
+	dv := args[1]
+	dt := dv.Type()
+	if dt.Kind() != reflect.Slice {
+		dn := dt.PkgPath() + "/" + dt.Name()
+		return args[0], fmt.Errorf("Expected []T as second argument for All.F(), but got %s", dn)
+	}
+
+	for i := 0; i < dv.Len(); i++ {
+		v := dv.Index(i)
+		res, err := arg.F(v)
+		if err != nil {
+			return args[0], err
+		}
+		b, ok := res.Interface().(bool)
+		if !ok {
+			return args[0], fmt.Errorf("Expected bool result from All.Arg.F(), but got %v", v.Type())
+		}
+		if !b {
+			return reflect.ValueOf(false), nil
+		}
+	}
+
+	return reflect.ValueOf(true), nil
+}
+
+var all = All{}
+
+func ALL(arg ValueFunctor) ValueFunctor {
+	return UnaryLazyArg{
+		Op:  all,
+		Arg: arg,
+	}
+}
+
 type Index struct{}
 
 func (i Index) F(args ...reflect.Value) (reflect.Value, error) {
@@ -1082,8 +1237,9 @@ type DescJSON struct {
 }
 
 type UnaryJSON struct {
-	Op  string          `json:"op"`
-	Arg json.RawMessage `json:"arg"`
+	Binding string          `json:"binding"`
+	Op      string          `json:"op"`
+	Arg     json.RawMessage `json:"arg"`
 }
 
 type BinaryJSON struct {
@@ -1109,7 +1265,7 @@ func (d *Desc) UnmarshalJSON(bs []byte) error {
 	return nil
 }
 
-func (u *UnaryLazyArg) UnmarshalJSON(bs []byte) error {
+func (u *Unary) UnmarshalJSON(bs []byte) error {
 	var raw UnaryJSON
 	if err := json.Unmarshal(bs, &raw); err != nil {
 		return err
@@ -1122,11 +1278,66 @@ func (u *UnaryLazyArg) UnmarshalJSON(bs []byte) error {
 	switch raw.Op {
 	case "distinct":
 		u.Op = distinct
+	case "any":
+		u.Op = any
+	case "all":
+		u.Op = all
 	case "index":
 		u.Op = index
 	default:
 		return fmt.Errorf("Unknown unary operation: \"%s\"", raw.Op)
 	}
+	return nil
+}
+
+func unmarshalUnary(u *Unary, bs []byte) (*UnaryJSON, error) {
+	var raw UnaryJSON
+	if err := json.Unmarshal(bs, &raw); err != nil {
+		return nil, err
+	}
+	var arg MValueFunctor
+	if err := json.Unmarshal(raw.Arg, &arg); err != nil {
+		return nil, err
+	}
+	u.Arg = arg.ValueFunctor
+	switch raw.Op {
+	case "distinct":
+		u.Op = distinct
+	case "any":
+		u.Op = any
+	case "all":
+		u.Op = all
+	case "index":
+		u.Op = index
+	default:
+		return nil, fmt.Errorf("Unknown unary operation: \"%s\"", raw.Op)
+	}
+	return &raw, nil
+}
+
+func (ula *UnaryLazyArg) UnmarshalJSON(bs []byte) error {
+	u := (*Unary)(ula)
+	uJSON, err := unmarshalUnary(u, bs)
+	if err != nil {
+		return err
+	}
+	if uJSON.Binding != "lazy" {
+		return errors.New("UnaryLazyArg expexts binding=lazy")
+	}
+
+	return nil
+}
+
+func (ula *UnaryEagerArg) UnmarshalJSON(bs []byte) error {
+	u := (*Unary)(ula)
+	uJSON, err := unmarshalUnary(u, bs)
+	if err != nil {
+		return err
+	}
+	if uJSON.Binding != "eager" {
+		return errors.New("UnaryEagerArg expexts binding=eager")
+	}
+
 	return nil
 }
 
@@ -1176,6 +1387,11 @@ func (mvf *MValueFunctor) UnmarshalJSON(bs []byte) error {
 	var ula UnaryLazyArg
 	if err := json.Unmarshal(bs, &ula); err == nil && ula.Arg != nil {
 		mvf.ValueFunctor = ula
+		return nil
+	}
+	var uea UnaryEagerArg
+	if err := json.Unmarshal(bs, &uea); err == nil && uea.Arg != nil {
+		mvf.ValueFunctor = uea
 		return nil
 	}
 	var b Binary
@@ -1238,6 +1454,50 @@ func (c Constant) MarshalJSON() ([]byte, error) {
 	return json.Marshal(reflect.Value(c).Interface())
 }
 
+func marshalUnaryOpArg(u Unary) ([]byte, []byte, error) {
+	op, err := json.Marshal(u.Op)
+	if err != nil {
+		return nil, nil, err
+	}
+	arg, err := json.Marshal(u.Arg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return op, arg, nil
+}
+
+func (o UnaryLazyArg) MarshalJSON() ([]byte, error) {
+	op, arg, err := marshalUnaryOpArg(Unary(o))
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO(markdittmer): Error check buffer writes.
+	var buf bytes.Buffer
+	buf.WriteString(`{"binding":"lazy","op":`)
+	buf.Write(op)
+	buf.WriteString(`,"arg":`)
+	buf.Write(arg)
+	buf.WriteString(`}`)
+	return buf.Bytes(), nil
+}
+
+func (o UnaryEagerArg) MarshalJSON() ([]byte, error) {
+	op, arg, err := marshalUnaryOpArg(Unary(o))
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO(markdittmer): Error check buffer writes.
+	var buf bytes.Buffer
+	buf.WriteString(`{"binding":"eager","op":`)
+	buf.Write(op)
+	buf.WriteString(`,"arg":`)
+	buf.Write(arg)
+	buf.WriteString(`}`)
+	return buf.Bytes(), nil
+}
+
 func (d Desc) MarshalJSON() ([]byte, error) {
 	var b bytes.Buffer
 	_, err := b.WriteString(`{"desc":`)
@@ -1262,6 +1522,14 @@ func (o Index) MarshalJSON() ([]byte, error) {
 
 func (o Distinct) MarshalJSON() ([]byte, error) {
 	return []byte(`"distinct"`), nil
+}
+
+func (o Any) MarshalJSON() ([]byte, error) {
+	return []byte(`"any"`), nil
+}
+
+func (o All) MarshalJSON() ([]byte, error) {
+	return []byte(`"all"`), nil
 }
 
 func (o Eq) MarshalJSON() ([]byte, error) {

@@ -40,7 +40,7 @@ func (rs *RunsSlice) Find(q Query) ([]Run, error) {
 	var err error
 	var v reflect.Value
 	skip := uint(0)
-	limit := ^uint(0)
+	limit := int(^uint(0) >> 1)
 
 	if q.Skip != nil {
 		v, err = q.Skip.F(reflect.ValueOf(rs.runs))
@@ -57,7 +57,7 @@ func (rs *RunsSlice) Find(q Query) ([]Run, error) {
 		if err != nil {
 			return nil, err
 		}
-		limit, ok = v.Interface().(uint)
+		limit, ok = v.Interface().(int)
 		if !ok {
 			return nil, fmt.Errorf("Expected limit functor to return uint but got %v", v.Type())
 		}
@@ -65,18 +65,22 @@ func (rs *RunsSlice) Find(q Query) ([]Run, error) {
 
 	res := make([]Run, 0, len(rs.runs))
 	for _, r := range rs.runs {
-		if len(res) >= int(limit) {
+		if len(res) >= limit {
 			break
 		}
-		bv, err := q.Predicate.F(reflect.ValueOf(r))
-		if err != nil {
-			continue
-		}
-		b, ok := bv.Interface().(bool)
-		if !ok {
-			continue
-		}
-		if b {
+		if q.Predicate != nil {
+			bv, err := q.Predicate.F(reflect.ValueOf(r))
+			if err != nil {
+				continue
+			}
+			b, ok := bv.Interface().(bool)
+			if !ok {
+				continue
+			}
+			if b {
+				res = append(res, r)
+			}
+		} else {
 			res = append(res, r)
 		}
 	}
@@ -91,16 +95,6 @@ func (rs *RunsSlice) Find(q Query) ([]Run, error) {
 		}
 	}
 
-	if limit < uint(len(res)) {
-		if skip > 0 {
-			res = res[skip:limit]
-		} else {
-			res = res[:limit]
-		}
-	} else if skip > 0 {
-		res = res[skip:]
-	}
-
 	if q.Filter != nil {
 		v, err = q.Filter.F(reflect.ValueOf(res))
 		if err != nil {
@@ -110,6 +104,16 @@ func (rs *RunsSlice) Find(q Query) ([]Run, error) {
 		if !ok {
 			return nil, fmt.Errorf("Expected filter to return []TestRun but got %v", v.Type())
 		}
+	}
+
+	if limit < len(res) {
+		if skip > 0 {
+			res = res[skip:limit]
+		} else {
+			res = res[:limit]
+		}
+	} else if skip > 0 {
+		res = res[skip:]
 	}
 
 	return res, nil

@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/web-platform-tests/data-migration/grid/split"
+
 	"github.com/web-platform-tests/data-migration/grid/split/results"
 	"github.com/web-platform-tests/data-migration/grid/split/runs"
 	"github.com/web-platform-tests/data-migration/grid/split/tests"
@@ -17,8 +18,8 @@ type Query struct {
 
 type Result struct {
 	Runs    []runs.Run
-	Tests   []tests.Test
-	Results [][]results.Value
+	Tests   []tests.RankedTest
+	Results []results.TestResults
 }
 
 type Store interface {
@@ -33,14 +34,14 @@ type TriStore struct {
 
 func (s TriStore) Find(q Query) (Result, error) {
 	var err error
-	var ts tests.Tests
+	var ts tests.RankedTests
 	var rs []runs.Run
 	var wg sync.WaitGroup
 	if q.TestQuery != nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ts = s.TestNames.Find(*q.TestQuery)
+			ts, err = s.TestNames.Find(*q.TestQuery)
 		}()
 	} else {
 		ts = s.TestNames.GetAll()
@@ -60,16 +61,33 @@ func (s TriStore) Find(q Query) (Result, error) {
 		return Result{}, err
 	}
 
-	ress := make([][]results.Value, 0, len(ts))
+	tks := make([]split.TestKey, 0, len(ts))
 	for _, t := range ts {
-		res := make([]results.Value, 0, len(rs))
-		for _, tr := range rs {
-			res = append(res, s.Results.Get(results.Key{split.RunKey(tr.ID), split.TestKey(t.ID())}))
-		}
-		ress = append(ress, res)
+		tks = append(tks, split.TestKey(t.ID()))
+	}
+	rks := make([]split.RunKey, 0, len(rs))
+	for _, r := range rs {
+		rks = append(rks, split.RunKey(r.ID))
 	}
 
-	// TODO(markdittmer): Run results query.
+	var ress []results.TestResults
+	if len(tks) > 0 && len(rks) > 0 {
+		if q.ResultQuery != nil {
+			ress, err = s.Results.Find(rks, tks, *q.ResultQuery)
+		} else {
+			ress, err = s.Results.GetAll(rks, tks)
+		}
+	} else {
+		if q.ResultQuery != nil {
+			ress, err = s.Results.Find(rks, tks, *q.ResultQuery)
+		} else {
+			ress, err = s.Results.GetAll(rks, tks)
+		}
+	}
+
+	if err != nil {
+		return Result{}, err
+	}
 
 	return Result{rs, ts, ress}, nil
 }

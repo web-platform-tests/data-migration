@@ -269,6 +269,88 @@ func TestDistinct(t *testing.T) {
 	assert.Equal(t, bob, res[1])
 }
 
+type boolContainer struct {
+	Bool bool
+}
+
+func TestAny(t *testing.T) {
+	d := r.ANY(r.Property{
+		PropertyName: "Bool",
+	})
+	result, err := d.F(v([]boolContainer{
+		boolContainer{false},
+		boolContainer{true},
+	}))
+	assert.Nil(t, err)
+	res, ok := result.Interface().(bool)
+	assert.True(t, ok)
+	assert.Equal(t, true, res)
+
+	result, err = d.F(v([]boolContainer{}))
+	assert.Nil(t, err)
+	res, ok = result.Interface().(bool)
+	assert.True(t, ok)
+	assert.Equal(t, false, res)
+
+	result, err = d.F(v([]boolContainer{
+		boolContainer{false},
+		boolContainer{false},
+		boolContainer{false},
+	}))
+	assert.Nil(t, err)
+	res, ok = result.Interface().(bool)
+	assert.True(t, ok)
+	assert.Equal(t, false, res)
+
+	result, err = d.F(v("not a slice"))
+	assert.NotNil(t, err)
+
+	d = r.ANY(c("not a boolean"))
+	result, err = d.F(v([]boolContainer{
+		boolContainer{true},
+	}))
+	assert.NotNil(t, err)
+}
+
+func TestAll(t *testing.T) {
+	d := r.ALL(r.Property{
+		PropertyName: "Bool",
+	})
+	result, err := d.F(v([]boolContainer{
+		boolContainer{true},
+		boolContainer{true},
+	}))
+	assert.Nil(t, err)
+	res, ok := result.Interface().(bool)
+	assert.True(t, ok)
+	assert.Equal(t, true, res)
+
+	result, err = d.F(v([]boolContainer{}))
+	assert.Nil(t, err)
+	res, ok = result.Interface().(bool)
+	assert.True(t, ok)
+	assert.Equal(t, true, res)
+
+	result, err = d.F(v([]boolContainer{
+		boolContainer{true},
+		boolContainer{false},
+		boolContainer{true},
+	}))
+	assert.Nil(t, err)
+	res, ok = result.Interface().(bool)
+	assert.True(t, ok)
+	assert.Equal(t, false, res)
+
+	result, err = d.F(v("not a slice"))
+	assert.NotNil(t, err)
+
+	d = r.ALL(c("not a boolean"))
+	result, err = d.F(v([]boolContainer{
+		boolContainer{true},
+	}))
+	assert.NotNil(t, err)
+}
+
 func TestIndex(t *testing.T) {
 	result, err := r.INDEX(c(2)).F(v([]string{"0", "1", "2"}))
 	assert.Nil(t, err)
@@ -375,22 +457,26 @@ func TestMarshalBinary(t *testing.T) {
 
 var marshalUnaryOps = []marshalOp{
 	marshalOp{"distinct", r.Distinct{}},
+	marshalOp{"any", r.Any{}},
+	marshalOp{"all", r.All{}},
 	marshalOp{"index", r.Index{}},
 }
 
 func TestMarshalUnary(t *testing.T) {
 	for _, op := range marshalUnaryOps {
-		data := `{"op":"` + op.OpName + `","arg":{"property_name":"IsSomething"}}`
-		var value r.MValueFunctor
-		testMarshalSymmetry(t, data, &value)
-		u, ok := value.ValueFunctor.(r.UnaryLazyArg)
-		if ok {
-			assert.True(t, ok)
-		} else {
-			assert.True(t, ok)
-		}
-		_, ok = u.Arg.(r.Property)
-		assert.True(t, ok)
-		assert.True(t, reflect.TypeOf(u.Op).ConvertibleTo(reflect.TypeOf(op.Exemplar)))
+		data1, data2 := `{"binding":"lazy","op":"`+op.OpName+`","arg":{"property_name":"IsSomething"}}`, `{"binding":"eager","op":"`+op.OpName+`","arg":{"property_name":"IsSomething"}}`
+		var value1, value2 r.MValueFunctor
+		testMarshalSymmetry(t, data1, &value1)
+		testMarshalSymmetry(t, data2, &value2)
+		u1, ok1 := value1.ValueFunctor.(r.UnaryLazyArg)
+		u2, ok2 := value1.ValueFunctor.(r.UnaryLazyArg)
+		assert.True(t, ok1)
+		assert.True(t, ok2)
+		_, ok1 = u1.Arg.(r.Property)
+		_, ok2 = u2.Arg.(r.Property)
+		assert.True(t, ok1)
+		assert.True(t, ok2)
+		assert.True(t, reflect.TypeOf(u1.Op).ConvertibleTo(reflect.TypeOf(op.Exemplar)))
+		assert.True(t, reflect.TypeOf(u2.Op).ConvertibleTo(reflect.TypeOf(op.Exemplar)))
 	}
 }
