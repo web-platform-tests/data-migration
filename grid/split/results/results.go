@@ -10,43 +10,51 @@ import (
 
 type Key struct {
 	split.RunKey
-	split.TestKey
+	TestKey split.TestKey
 }
 
-type Value []split.TestStatus
+type Value split.TestStatus
+
+type SubKeyValue struct {
+	*split.TestKey
+	Value
+}
+
+type SubKeyValues []SubKeyValue
 
 type Query split.Query
 
 type KeyValue struct {
 	Key
-	Value
+	SubKeyValues
 }
 
-type TestResults struct {
-	Test    split.TestKey `json:"test"`
-	Results []Value       `json:"results"`
+type TestResult struct {
+	Test    split.TestKey  `json:"test"`
+	SubTest *split.TestKey `json:"sub_test"`
+	Result  Value          `json:"results"`
 }
 
 type Results interface {
-	Get(Key) Value
-	GetBatch([]Key) []Value
+	Get(Key) SubKeyValues
+	GetBatch([]Key) []SubKeyValues
 	Put(KeyValue)
 	PutBatch([]KeyValue)
-	Find([]split.RunKey, []split.TestKey, Query) ([]TestResults, error)
-	GetAll([]split.RunKey, []split.TestKey) ([]TestResults, error)
+	Find([]split.RunKey, []split.TestKey, Query) ([][]TestResult, error)
+	GetAll([]split.RunKey, []split.TestKey) ([][]TestResult, error)
 }
 
 type ResultsMap struct {
-	m map[Key]Value
+	m map[Key][]SubKeyValue
 	c chan KeyValue
 }
 
-func (m *ResultsMap) Get(k Key) Value {
+func (m *ResultsMap) Get(k Key) SubKeyValues {
 	return m.m[k]
 }
 
-func (m *ResultsMap) GetBatch(ks []Key) []Value {
-	vs := make([]Value, 0, len(ks))
+func (m *ResultsMap) GetBatch(ks []Key) []SubKeyValues {
+	vs := make([]SubKeyValues, 0, len(ks))
 	for _, k := range ks {
 		vs = append(vs, m.Get(k))
 	}
@@ -63,7 +71,7 @@ func (m *ResultsMap) PutBatch(kvs []KeyValue) {
 	}
 }
 
-func (m *ResultsMap) Find(rs []split.RunKey, ts []split.TestKey, q Query) ([]TestResults, error) {
+func (m *ResultsMap) Find(rs []split.RunKey, ts []split.TestKey, q Query) ([][]TestResult, error) {
 	var ok bool
 	var err error
 	var v reflect.Value
@@ -91,19 +99,18 @@ func (m *ResultsMap) Find(rs []split.RunKey, ts []split.TestKey, q Query) ([]Tes
 		}
 	}
 
-	ress := make([]TestResults, 0, len(ts))
+	ress := make([][]TestResult, 0, len(ts))
 	for _, t := range ts {
-		res := TestResults{t, make([]Value, 0, len(rs))}
+		res := make([]TestResult, 0, len(rs))
 		for _, r := range rs {
-			res.Results = append(res.Results, m.m[Key{r, t}])
-		}
-
-		if len(ress) >= limit {
-			break
+			skvs := m.m[Key{r, t}]
+			for _, skv := range skvs {
+				res = append(res, TestResult{t, skv.TestKey, skv.Value})
+			}
 		}
 
 		if q.Predicate != nil {
-			bv, err := q.Predicate.F(reflect.ValueOf(res.Results))
+			bv, err := q.Predicate.F(reflect.ValueOf(res))
 			if err != nil {
 				continue
 			}
@@ -124,7 +131,7 @@ func (m *ResultsMap) Find(rs []split.RunKey, ts []split.TestKey, q Query) ([]Tes
 		if err != nil {
 			return nil, err
 		}
-		ress, ok = v.Interface().([]TestResults)
+		ress, ok = v.Interface().([][]TestResult)
 		if !ok {
 			return nil, fmt.Errorf("Expected order to return []TestResults but got %v", v.Type())
 		}
@@ -135,7 +142,7 @@ func (m *ResultsMap) Find(rs []split.RunKey, ts []split.TestKey, q Query) ([]Tes
 		if err != nil {
 			return nil, err
 		}
-		ress, ok = v.Interface().([]TestResults)
+		ress, ok = v.Interface().([][]TestResult)
 		if !ok {
 			return nil, fmt.Errorf("Expected filter to return []TestResults but got %v", v.Type())
 		}
@@ -154,12 +161,15 @@ func (m *ResultsMap) Find(rs []split.RunKey, ts []split.TestKey, q Query) ([]Tes
 	return ress, nil
 }
 
-func (m *ResultsMap) GetAll(rs []split.RunKey, ts []split.TestKey) ([]TestResults, error) {
-	ress := make([]TestResults, 0, len(ts))
+func (m *ResultsMap) GetAll(rs []split.RunKey, ts []split.TestKey) ([][]TestResult, error) {
+	ress := make([][]TestResult, 0, len(ts))
 	for _, t := range ts {
-		res := TestResults{t, make([]Value, 0, len(rs))}
+		res := make([]TestResult, 0, len(rs))
 		for _, r := range rs {
-			res.Results = append(res.Results, m.m[Key{r, t}])
+			skvs := m.m[Key{r, t}]
+			for _, skv := range skvs {
+				res = append(res, TestResult{t, skv.TestKey, skv.Value})
+			}
 		}
 		ress = append(ress, res)
 	}
@@ -169,13 +179,13 @@ func (m *ResultsMap) GetAll(rs []split.RunKey, ts []split.TestKey) ([]TestResult
 
 func NewResultsMap() *ResultsMap {
 	rm := &ResultsMap{
-		m: make(map[Key]Value),
+		m: make(map[Key][]SubKeyValue),
 		c: make(chan KeyValue),
 	}
 
 	go func() {
 		for kv := range rm.c {
-			rm.m[kv.Key] = kv.Value
+			rm.m[kv.Key] = kv.SubKeyValues
 		}
 	}()
 

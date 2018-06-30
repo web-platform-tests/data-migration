@@ -65,9 +65,6 @@ func (rs *RunsSlice) Find(q Query) ([]Run, error) {
 
 	res := make([]Run, 0, len(rs.runs))
 	for _, r := range rs.runs {
-		if len(res) >= limit {
-			break
-		}
 		if q.Predicate != nil {
 			bv, err := q.Predicate.F(reflect.ValueOf(r))
 			if err != nil {

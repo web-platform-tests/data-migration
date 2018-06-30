@@ -19,7 +19,7 @@ type Query struct {
 type Result struct {
 	Runs    []runs.Run
 	Tests   []tests.RankedTest
-	Results []results.TestResults
+	Results [][]results.TestResult
 }
 
 type Store interface {
@@ -70,7 +70,7 @@ func (s TriStore) Find(q Query) (Result, error) {
 		rks = append(rks, split.RunKey(r.ID))
 	}
 
-	var ress []results.TestResults
+	var ress [][]results.TestResult
 	if len(tks) > 0 && len(rks) > 0 {
 		if q.ResultQuery != nil {
 			ress, err = s.Results.Find(rks, tks, *q.ResultQuery)

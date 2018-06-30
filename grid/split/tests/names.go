@@ -316,7 +316,7 @@ func (sttn *STTestNames) PutBatch(ns Names) {
 }
 
 func (sttn *STTestNames) Find(q Query) (RankedTests, error) {
-	term := q.Term
+	term := strings.ToLower(q.Term)
 	res := make(RankedTests, 0, len(sttn.ts))
 
 	var ok bool
@@ -347,21 +347,12 @@ func (sttn *STTestNames) Find(q Query) (RankedTests, error) {
 	}
 
 	for _, stt := range sttn.ts {
-		var num, rank int
-		if strings.HasPrefix(string(stt.TestName), "/2dcontext/building-paths/") {
-			num, rank = stt.match(term)
-		} else {
-			num, rank = stt.match(term)
-		}
+		num, rank := stt.match(term)
 
 		if num != len(term) {
 			continue
 		}
 		t := NewRankedTest(stt.TestName, Rank(rank))
-
-		if len(res) >= limit {
-			break
-		}
 
 		if q.Predicate != nil {
 			bv, err := q.Predicate.F(reflect.ValueOf(t))
@@ -431,7 +422,8 @@ func NewSTTestNames() TestNames {
 	}
 	go func() {
 		count := 0
-		for n := range ret.c {
+		for name := range ret.c {
+			n := Name(strings.ToLower(string(name)))
 			if _, ok := ret.nmap[n]; !ok {
 				if count%10000 == 0 {
 					log.Printf("INFO: Indexing test %d", count)

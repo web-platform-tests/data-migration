@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"io/ioutil"
@@ -74,7 +75,7 @@ func main() {
 
 	loadTestRuns()
 
-	for _, tr := range trs {
+	for i, tr := range trs {
 		resp, err := http.Get(tr.RawResultsURL)
 		if err != nil {
 			log.Printf("WARN: Failed to load raw results from \"%s\" for %v", tr.RawResultsURL, tr)
@@ -108,19 +109,20 @@ func main() {
 					split.RunKey(tr.ID),
 					split.TestKey(tests.NewTest(tests.Name(tName)).ID()),
 				},
-				results.Value(make([]split.TestStatus, 0, 1)),
+				make([]results.SubKeyValue, 0, 1),
 			}
 			if res.Status != "OK" {
-				ress.Value = append(ress.Value, split.TestStatus(metrics.TestStatusFromString(res.Status)))
+				ress.SubKeyValues = append(ress.SubKeyValues, results.SubKeyValue{nil, results.Value(metrics.TestStatusFromString(res.Status))})
 			}
 
 			subs := bySubTestName(res.Subtests[0:])
 			sort.Sort(subs)
 			for _, sub := range subs {
-				ress.Value = append(ress.Value, split.TestStatus(metrics.SubTestStatusFromString(sub.Status)))
+				subKey := sha256.Sum256([]byte(sub.Name))
+				ress.SubKeyValues = append(ress.SubKeyValues, results.SubKeyValue{(*split.TestKey)(&subKey), results.Value(metrics.SubTestStatusFromString(sub.Status))})
 			}
 
-			if len(ress.Value) > 0 {
+			if len(ress.SubKeyValues) > 0 {
 				resBatch = append(resBatch, ress)
 			}
 		}
@@ -128,7 +130,9 @@ func main() {
 		tns.PutBatch(tBatch)
 		ress.PutBatch(resBatch)
 
-		runTestQueries()
+		if i%10 == 9 {
+			runTestQueries()
+		}
 	}
 }
 
@@ -138,10 +142,9 @@ func monitor() {
 		runtime.ReadMemStats(&stats)
 		if stats.HeapAlloc > *maxHeapSize {
 			log.Fatal("ERRO: Out of memory")
+		} else {
+			log.Printf("INFO: Monitor: %d heap-allocated bytes OK", stats.HeapAlloc)
 		}
-		// } else {
-		// 	log.Printf("INFO: Monitor: %d heap-allocated bytes OK", stats.HeapAlloc)
-		// }
 		time.Sleep(monitorSleep)
 	}
 }
@@ -177,7 +180,7 @@ func loadTestRuns() {
 func runTestQueries() {
 	q := store.Query{
 		TestQuery: &tests.Query{
-			Term: "/FileAPI/url/",
+			Term: "css",
 		},
 		RunQuery: &runs.Query{
 			Predicate: r.EQ(
@@ -186,12 +189,25 @@ func runTestQueries() {
 				},
 				r.Constant(reflect.ValueOf("chrome")),
 			),
+			Order: r.Property{
+				PropertyName: "CreatedAt",
+			},
 		},
 		ResultQuery: &results.Query{
-			Predicate: r.UnaryEagerArg{
-				Op:  r.ANY(r.EQ(r.Constant(reflect.ValueOf(uint8(metrics.TestStatusFromString("PASS")))), nil)),
-				Arg: r.INDEX(r.Constant(reflect.ValueOf(0))),
-			},
+			Predicate: r.AND(
+				r.UnaryEagerArg{
+					Op: r.EQ(r.Property{
+						PropertyName: "Result",
+					}, r.Constant(reflect.ValueOf(uint8(metrics.TestStatusFromString("PASS"))))),
+					Arg: r.INDEX(r.Constant(reflect.ValueOf(0))),
+				},
+				r.UnaryEagerArg{
+					Op: r.NEQ(r.Property{
+						PropertyName: "Result",
+					}, r.Constant(reflect.ValueOf(uint8(metrics.TestStatusFromString("PASS"))))),
+					Arg: r.INDEX(r.Constant(reflect.ValueOf(1))),
+				},
+			),
 		},
 	}
 
@@ -203,14 +219,21 @@ func runTestQueries() {
 		return
 	}
 	log.Printf("INFO: Query yielded %d tests, %d runs, and %d slices of results", len(res.Tests), len(res.Runs), len(res.Results))
-	for _, t := range res.Tests {
-		log.Printf("INFO: Matched test name: %s", t.Name())
-	}
-	for _, r := range res.Results {
-		for _, t := range res.Tests {
-			if t.ID() == tests.ID(r.Test) {
-				log.Printf("INFO: Matched result test name: %s", t.Name())
-			}
-		}
-	}
+	// for _, t := range res.Tests {
+	// 	log.Printf("INFO: Matched test name: %s", t.Name())
+	// }
+	// if len(res.Results) > 0 && len(res.Results[0]) > 0 {
+	// 	for _, rs := range res.Results {
+	// 		r := rs[0]
+	// 		for _, t := range res.Tests {
+	// 			if t.ID() == tests.ID(r.Test) {
+	// 				if r.SubTest != nil {
+	// 					log.Printf("INFO: Matched result test name: %s, subtest ID %x; value: %d", t.Name(), *r.SubTest, r.Result)
+	// 				} else {
+	// 					log.Printf("INFO: Matched result test name: %s; value: %d", t.Name(), r.Result)
+	// 				}
+	// 			}
+	// 		}
+	// 	}
+	// }
 }
