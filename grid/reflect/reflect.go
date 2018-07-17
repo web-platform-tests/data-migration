@@ -887,7 +887,7 @@ func (c UnaryEagerArg) F(args ...reflect.Value) (reflect.Value, error) {
 	for _, a := range allArgs {
 		ts = append(ts, a.Type())
 	}
-	log.Printf("INFO: UnaryEagerArg.Op.F(%v)", ts)
+	// log.Printf("INFO: UnaryEagerArg.Op.F(%v)", ts)
 
 	return c.Op.F(allArgs...)
 }
@@ -1098,14 +1098,14 @@ func (d Any) F(args ...reflect.Value) (reflect.Value, error) {
 	}
 
 	vArgs := make([]reflect.Value, 1, len(args)-1)
-	log.Printf("INFO: Any.F(): Functor in foreach: %v; slice of foreach of type %v; first-unbound args foreach functor args: %v", arg, dv.Type(), vArgs)
+	// log.Printf("INFO: Any.F(): Functor in foreach: %v; slice of foreach of type %v; first-unbound args foreach functor args: %v", arg, dv.Type(), vArgs)
 
 	if len(args) > 2 {
 		vArgs = append(vArgs, args[2:]...)
 	}
 	for i := 0; i < dv.Len(); i++ {
 		v := dv.Index(i)
-		log.Printf("INFO: Any.F(): Last functor arg: %v of type %v", v, v.Type())
+		// log.Printf("INFO: Any.F(): Last functor arg: %v of type %v", v, v.Type())
 
 		vArgs[0] = v
 		res, err := arg.F(vArgs...)
