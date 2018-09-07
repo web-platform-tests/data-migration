@@ -35,6 +35,14 @@ func main() {
 			bigtable.PrefixRange("de6ce4a47fe10bc7a86947ca9ff7dbc48c2d4648#chrome-62.0-linux-3.16@2017-09-30T14:26:23Z$"),
 			func(r bigtable.Row) bool { return true },
 		)
+		rows, err = testLoadRuns(
+			"Some data; any data",
+			tbl,
+			ctx,
+			bigtable.PrefixRange(""),
+			func(r bigtable.Row) bool { return true },
+			bigtable.LimitRows(100),
+		)
 
 		if err != nil {
 			log.Fatal(err)
@@ -60,19 +68,15 @@ func main() {
 func testLoadRuns(name string, tbl *bigtable.Table, ctx context.Context, rowSet bigtable.RowSet, f func(bigtable.Row) bool, opts ...bigtable.ReadOption) ([]bigtable.Row, error) {
 	start := time.Now()
 	rows := make([]bigtable.Row, 0)
-	err := tbl.ReadRows(
-		ctx,
-		bigtable.PrefixRange("de6ce4a47fe10bc7a86947ca9ff7dbc48c2d4648#chrome-62.0-linux-3.16@2017-09-30T14:26:23Z$"),
-		func(r bigtable.Row) bool {
-			rows = append(rows, r)
-			return true
-		},
-	)
+	err := tbl.ReadRows(ctx, rowSet, func(r bigtable.Row) bool {
+		rows = append(rows, r)
+		return f(r)
+	}, opts...)
 	if err != nil {
 		log.Error(err)
 	}
 	end := time.Now()
-	log.Printf("Query time: %v ; number of rows: %d", end.Sub(start), len(rows))
+	log.Printf("%s: query time: %v ; number of rows: %d", name, end.Sub(start), len(rows))
 
 	return rows, err
 }
