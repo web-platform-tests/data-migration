@@ -2,43 +2,65 @@ package main
 
 import (
 	"context"
-	"flag"
-	"log"
 	"time"
 
 	"cloud.google.com/go/bigtable"
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/api/option"
 )
 
-var projectID *string
-var gcpCredentialsFile *string
-var outputBTInstanceID *string
-var outputBTTableID *string
-var outputBTFamily *string
-
-func init() {
-	projectID = flag.String("project_id", "wptdashboard", "Google Cloud Platform project id")
-	gcpCredentialsFile = flag.String("gcp_credentials_file", "client-secret.json", "Path to credentials file for authenticating against Google Cloud Platform services")
-	outputBTInstanceID = flag.String("output_bt_instance_id", "wpt-results-matrix", "Output BigTable instance ID")
-	outputBTTableID = flag.String("output_bt_table_id", "wpt-results-per-test", "Output BigTable table ID")
-	outputBTFamily = flag.String("output_bt_family", "tests", "Output BigTable column family for test results")
-}
+const (
+	projectID          = "wptdashboard"
+	gcpCredentialsFile = "client-secret.json"
+	outputBTInstanceID = "wpt-results-matrix"
+	outputBTTableID    = "wpt-results-per-test"
+	outputBTFamily     = "tests"
+)
 
 func main() {
-	log.SetFlags(log.LstdFlags | log.Llongfile | log.LUTC)
-	flag.Parse()
-
 	ctx := context.Background()
 
-	btClient, err := bigtable.NewClient(ctx, *projectID, *outputBTInstanceID, option.WithCredentialsFile(*gcpCredentialsFile))
+	btClient, err := bigtable.NewClient(ctx, projectID, outputBTInstanceID, option.WithCredentialsFile(gcpCredentialsFile))
 	if err != nil {
 		log.Fatal(err)
 	}
-	tbl := btClient.Open(*outputBTTableID)
+	tbl := btClient.Open(outputBTTableID)
 
+	var rows []bigtable.Row
+	for i := 0; i < 20; i++ {
+		rows, err = testLoadRuns(
+			"One complete run",
+			tbl,
+			ctx,
+			bigtable.PrefixRange("de6ce4a47fe10bc7a86947ca9ff7dbc48c2d4648#chrome-62.0-linux-3.16@2017-09-30T14:26:23Z$"),
+			func(r bigtable.Row) bool { return true },
+		)
+
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	if len(rows) > 0 {
+
+		for i := 0; i < 5 && i < len(rows); i++ {
+			for _, item := range rows[i][outputBTFamily] {
+				log.Printf("%dth row:\n  Row: %s\n  Col: %s\n  Value: %s\n\n", i, item.Row, item.Column, string(item.Value))
+			}
+		}
+
+		for i := len(rows) - 6; i >= 5 && i < len(rows); i++ {
+			for _, item := range rows[i][outputBTFamily] {
+				log.Printf("%dth row:\n  Row: %s\n  Col: %s\n  Value: %s\n\n", i, item.Row, item.Column, string(item.Value))
+			}
+		}
+	}
+}
+
+func testLoadRuns(name string, tbl *bigtable.Table, ctx context.Context, rowSet bigtable.RowSet, f func(bigtable.Row) bool, opts ...bigtable.ReadOption) ([]bigtable.Row, error) {
 	start := time.Now()
 	rows := make([]bigtable.Row, 0)
-	err = tbl.ReadRows(
+	err := tbl.ReadRows(
 		ctx,
 		bigtable.PrefixRange("de6ce4a47fe10bc7a86947ca9ff7dbc48c2d4648#chrome-62.0-linux-3.16@2017-09-30T14:26:23Z$"),
 		func(r bigtable.Row) bool {
@@ -47,18 +69,10 @@ func main() {
 		},
 	)
 	if err != nil {
-		log.Fatal(err)
+		log.Error(err)
 	}
 	end := time.Now()
 	log.Printf("Query time: %v ; number of rows: %d", end.Sub(start), len(rows))
-	if len(rows) > 0 {
-		for _, item := range rows[0][*outputBTFamily] {
-			log.Printf("First row:\n  Row: %s\n  Col: %s\n  Value: %s\n\n", item.Row, item.Column, string(item.Value))
-		}
-		last := make([]string, 0)
-		for _, item := range rows[len(rows)-1][*outputBTFamily] {
-			log.Printf("Last row:\n  Row: %s\n  Col: %s\n  Value: %s\n\n", item.Row, item.Column, string(item.Value))
-			last = append(last, string(item.Value))
-		}
-	}
+
+	return rows, err
 }
