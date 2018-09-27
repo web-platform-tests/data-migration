@@ -107,14 +107,20 @@ func NewBuffer(ctx context.Context, s int64) *buffer {
 	return &b
 }
 
-var maxHeapAlloc = uint64(4.5e+10)
+var maxHeapAlloc = uint64(4.0e+10)
 var monitorSleep = 2 * time.Second
+var monitorsPerGC = 4
 var putMutex = &sync.Mutex{}
 var putBlocked = false
 
 func monitor() {
 	var stats runtime.MemStats
-	for {
+	for i := 1; ; i++ {
+		if i%monitorsPerGC == 0 {
+			log.Infof("Monitor: Forcing GC")
+			runtime.GC()
+		}
+
 		runtime.ReadMemStats(&stats)
 		if stats.HeapAlloc > maxHeapAlloc {
 			log.Errorf("Out of memory")
