@@ -55,6 +55,7 @@ type buffer struct {
 	in  *semaphore.Weighted
 	out *semaphore.Weighted
 	ctx context.Context
+	num int64
 }
 
 func (b *buffer) Put(v interface{}) error {
@@ -69,6 +70,7 @@ func (b *buffer) Put(v interface{}) error {
 	b.m.Lock()
 	b.b[b.h] = v
 	b.h = (b.h + 1) % b.s
+	b.num++
 	b.m.Unlock()
 
 	b.out.Release(1)
@@ -86,6 +88,7 @@ func (b *buffer) Get() (interface{}, error) {
 	v := b.b[b.t]
 	b.b[b.t] = 0
 	b.t = (b.t + 1) % b.s
+	b.num--
 	b.m.Unlock()
 
 	b.in.Release(1)
@@ -93,7 +96,7 @@ func (b *buffer) Get() (interface{}, error) {
 	return v, nil
 }
 
-func NewBuffer(ctx context.Context, s int64) *buffer {
+func NewBuffer(ctx context.Context, name string, s int64) *buffer {
 	var b buffer
 	b.ctx = ctx
 	b.s = s
@@ -103,6 +106,16 @@ func NewBuffer(ctx context.Context, s int64) *buffer {
 	b.in = semaphore.NewWeighted(b.s)
 	b.out = semaphore.NewWeighted(b.s)
 	b.out.Acquire(b.ctx, b.s)
+
+	go func() {
+		for {
+			b.m.Lock()
+			log.Infof("Buffer %s: %d / %d", name, b.num, b.s)
+			b.m.Unlock()
+
+			time.Sleep(5 * time.Second)
+		}
+	}()
 
 	return &b
 }
@@ -186,7 +199,7 @@ func main() {
 
 	_, runs := getRuns(ctx, dsClient)
 
-	reportBuf := NewBuffer(ctx, 50)
+	reportBuf := NewBuffer(ctx, "report", 10)
 	go func() {
 		for _, run := range runs {
 			func() {
@@ -234,7 +247,7 @@ func main() {
 		log.Infof("Run processing complete")
 	}()
 
-	rowBuf := NewBuffer(ctx, 4000)
+	rowBuf := NewBuffer(ctx, "row", 4000)
 	go func() {
 		for {
 			iReport, err := reportBuf.Get()
@@ -253,7 +266,7 @@ func main() {
 
 			log.Infof("Got report for run ID %d", report.RunID)
 
-			go func() {
+			func() {
 				log.Infof("Queuing rows for run ID %d", report.RunID)
 
 				rowCount := 0
@@ -304,7 +317,8 @@ func main() {
 		}
 	}()
 
-	func() {
+	batchBuf := NewBuffer(ctx, "batch", 4000)
+	go func() {
 		done := false
 		for !done {
 			log.Infof("Gathering up to %d mutations for batch spanner write", 1000)
@@ -331,15 +345,49 @@ func main() {
 			}
 
 			if len(muts) > 0 {
-				log.Infof("Writing %d mutations for batch spanner write", len(muts))
+				log.Infof("Putting %d-mutation batch", len(muts))
 
-				_, err := sClient.Apply(ctx, muts)
+				err := batchBuf.Put(&muts)
 				if err != nil {
 					log.Fatal(err)
 				}
 
-				log.Infof("Wrote %d mutations to spanner", len(muts))
+				log.Infof("Put %d-mutation batch", len(muts))
 			}
+		}
+	}()
+
+	func() {
+		ws := semaphore.NewWeighted(4000)
+		for {
+			ws.Acquire(ctx, 1)
+
+			iBatch, err := batchBuf.Get()
+			if err != nil {
+				log.Fatal(err)
+			}
+			batch, ok := iBatch.(*[]*spanner.Mutation)
+			if !ok {
+				if iBatch.(error) != io.EOF {
+					log.Fatalf("Expected *[]*spanner.Mutation or io.EOF but got %v", iBatch)
+				} else {
+					log.Infof("Batch processing complete")
+					break
+				}
+			}
+
+			log.Infof("Got %d-mutation batch", len(*batch))
+
+			go func() {
+				_, err = sClient.Apply(ctx, *batch)
+				if err != nil {
+					log.Fatal(err)
+				}
+
+				log.Infof("Wrote %d-mutation batch to spanner", len(*batch))
+
+				ws.Release(1)
+			}()
 		}
 	}()
 
