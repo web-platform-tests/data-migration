@@ -45,7 +45,7 @@ var (
 		},
 		"RES03": []spanner.Statement{
 			spanner.Statement{
-				"SELECT test, subtest, result, message FROM results@{FORCE_INDEX=results_by_run_id} WHERE run_id = @run_id AND result != @result",
+				"SELECT test, subtest, result, message FROM results@{FORCE_INDEX=results_by_run_id_result} WHERE run_id = @run_id AND result != @result",
 				map[string]interface{}{
 					// NOTE: TEST_[result] and SUB_TEST_[result] enums from metrics
 					// package do not always line up! Probably need to map them to a
@@ -57,7 +57,7 @@ var (
 		},
 		"RES04": []spanner.Statement{
 			spanner.Statement{
-				"SELECT test, subtest, result, message FROM results@{FORCE_INDEX=results_by_run_id} WHERE run_id = @run_id AND result = @result",
+				"SELECT test, subtest, result, message FROM results@{FORCE_INDEX=results_by_run_id_result} WHERE run_id = @run_id AND result = @result",
 				map[string]interface{}{
 					// NOTE: TEST_[result] and SUB_TEST_[result] enums from metrics
 					// package do not always line up! Probably need to map them to a
@@ -67,7 +67,7 @@ var (
 				},
 			},
 			spanner.Statement{
-				"SELECT test, subtest, result, message FROM results@{FORCE_INDEX=results_by_run_id} WHERE run_id = @run_id AND result != @result",
+				"SELECT test, subtest, result, message FROM results@{FORCE_INDEX=results_by_run_id_result} WHERE run_id = @run_id AND result != @result",
 				map[string]interface{}{
 					// NOTE: TEST_[result] and SUB_TEST_[result] enums from metrics
 					// package do not always line up! Probably need to map them to a
@@ -79,7 +79,7 @@ var (
 		},
 		"RES05": []spanner.Statement{
 			spanner.Statement{
-				"SELECT test, subtest, result, message FROM results@{FORCE_INDEX=results_by_run_id} WHERE run_id = @run_id AND (LOWER(test) LIKE @pattern OR LOWER(subtest) LIKE @pattern) AND result != @result",
+				"SELECT test, subtest, result, message FROM results@{FORCE_INDEX=results_by_run_id_result} WHERE run_id = @run_id AND (LOWER(test) LIKE @pattern OR LOWER(subtest) LIKE @pattern) AND result != @result",
 				map[string]interface{}{
 					"pattern": "%cssom%",
 					// NOTE: TEST_[result] and SUB_TEST_[result] enums from metrics
