@@ -15,6 +15,7 @@ import (
 	"cloud.google.com/go/datastore"
 	"cloud.google.com/go/spanner"
 	retry "github.com/avast/retry-go"
+	farm "github.com/dgryski/go-farm"
 	log "github.com/sirupsen/logrus"
 	"github.com/web-platform-tests/results-analysis/metrics"
 	"github.com/web-platform-tests/wpt.fyi/shared"
@@ -22,6 +23,287 @@ import (
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
+
+func ToNullString(s *string) spanner.NullString {
+	if s != nil && *s != "" {
+		return spanner.NullString{
+			StringVal: *s,
+			Valid:     true,
+		}
+	}
+
+	return spanner.NullString{
+		Valid: false,
+	}
+}
+
+type Mutation interface {
+	ToMutation(*spanner.Client, string) *spanner.Mutation
+}
+
+type Test struct {
+	TestID      int64
+	TestName    string
+	SubtestName spanner.NullString
+}
+
+func NewTest(name string, sub *string) *Test {
+	var id int64
+	if sub != nil && *sub != "" {
+		id = int64(farm.Fingerprint64([]byte(name + "\x00" + *sub)))
+	} else {
+		id = int64(farm.Fingerprint64([]byte(name)))
+	}
+	return &Test{
+		TestID:      id,
+		TestName:    name,
+		SubtestName: ToNullString(sub),
+	}
+}
+
+type Run struct {
+	RunID           int64
+	BrowserName     string
+	BrowserVersion  string
+	OSName          string
+	OSVersion       string
+	WPTRevisionHash []byte
+	ResultsURL      spanner.NullString
+	CreatedAt       time.Time
+	TimeStart       time.Time
+	TimeEnd         time.Time
+	RawResultsURL   spanner.NullString
+	Labels          []string
+}
+
+func NewRun(r *shared.TestRun) (*Run, error) {
+	hash, err := hex.DecodeString(r.FullRevisionHash)
+	if err != nil {
+		return nil, err
+	}
+	return &Run{
+		RunID:           r.ID,
+		BrowserName:     r.BrowserName,
+		BrowserVersion:  r.BrowserVersion,
+		OSName:          r.OSName,
+		OSVersion:       r.OSVersion,
+		WPTRevisionHash: hash,
+		ResultsURL:      ToNullString(&r.ResultsURL),
+		CreatedAt:       r.CreatedAt,
+		TimeStart:       r.TimeStart,
+		TimeEnd:         r.TimeEnd,
+		RawResultsURL:   ToNullString(&r.RawResultsURL),
+		Labels:          r.Labels,
+	}, nil
+}
+
+type Result struct {
+	ResultID    int64
+	Name        string
+	Description spanner.NullString
+}
+
+func NewResult(name string, desc *string) *Result {
+	id := shared.TestStatusValueFromString(name)
+	return &Result{
+		ResultID:    id,
+		Name:        name,
+		Description: ToNullString(desc),
+	}
+}
+
+type TestRun struct {
+	TestID int64
+	RunID  int64
+}
+
+type TestResult struct {
+	TestID   int64
+	ResultID int64
+}
+
+type RunResult struct {
+	RunID    int64
+	ResultID int64
+}
+
+type TestRunResult struct {
+	TestID   int64
+	RunID    int64
+	ResultID int64
+	Message  spanner.NullString
+}
+
+type Structs struct {
+	Tests          map[int64]*Test
+	Runs           map[int64]*Run
+	Results        map[int64]*Result
+	TestRuns       map[int64]map[int64]*TestRun
+	TestResults    map[int64]map[int64]*TestResult
+	RunResults     map[int64]map[int64]*RunResult
+	TestRunResults map[int64]map[int64]map[int64]*TestRunResult
+}
+
+func NewStructs() *Structs {
+	return &Structs{
+		make(map[int64]*Test),
+		make(map[int64]*Run),
+		make(map[int64]*Result),
+		make(map[int64]map[int64]*TestRun),
+		make(map[int64]map[int64]*TestResult),
+		make(map[int64]map[int64]*RunResult),
+		make(map[int64]map[int64]map[int64]*TestRunResult),
+	}
+}
+
+func (s *Structs) AddTest(t *Test) {
+	s.Tests[t.TestID] = t
+}
+
+func (s *Structs) AddRun(r *Run) {
+	s.Runs[r.RunID] = r
+}
+
+func (s *Structs) AddResult(r *Result) {
+	s.Results[r.ResultID] = r
+}
+
+func (s *Structs) AddTestRun(t *Test, r *Run) {
+	if _, ok := s.TestRuns[t.TestID]; !ok {
+		s.TestRuns[t.TestID] = make(map[int64]*TestRun)
+	}
+	s.TestRuns[t.TestID][r.RunID] = &TestRun{
+		TestID: t.TestID,
+		RunID:  r.RunID,
+	}
+}
+
+func (s *Structs) AddTestResult(t *Test, r *Result) {
+	if _, ok := s.TestResults[t.TestID]; !ok {
+		s.TestResults[t.TestID] = make(map[int64]*TestResult)
+	}
+	s.TestResults[t.TestID][r.ResultID] = &TestResult{
+		TestID:   t.TestID,
+		ResultID: r.ResultID,
+	}
+}
+
+func (s *Structs) AddRunResult(run *Run, res *Result) {
+	if _, ok := s.RunResults[run.RunID]; !ok {
+		s.RunResults[run.RunID] = make(map[int64]*RunResult)
+	}
+	s.RunResults[run.RunID][res.ResultID] = &RunResult{
+		RunID:    run.RunID,
+		ResultID: res.ResultID,
+	}
+}
+
+func (s *Structs) AddTestRunResult(t *Test, run *Run, res *Result, message *string) {
+	msg := ToNullString(message)
+	if _, ok := s.TestRunResults[t.TestID]; !ok {
+		s.TestRunResults[t.TestID] = make(map[int64]map[int64]*TestRunResult)
+	}
+	if _, ok := s.TestRunResults[t.TestID][run.RunID]; !ok {
+		s.TestRunResults[t.TestID][run.RunID] = make(map[int64]*TestRunResult)
+	}
+	s.TestRunResults[t.TestID][run.RunID][res.ResultID] = &TestRunResult{
+		TestID:   t.TestID,
+		RunID:    run.RunID,
+		ResultID: res.ResultID,
+		Message:  msg,
+	}
+}
+
+func (s *Structs) ToMutations() ([]*spanner.Mutation, error) {
+	muts := make([]*spanner.Mutation, 0, len(s.Tests)+len(s.Runs)+len(s.Results)+len(s.TestRuns)+len(s.TestResults)+len(s.RunResults)+len(s.TestRunResults))
+	for _, t := range s.Tests {
+		m, err := spanner.InsertOrUpdateStruct("Tests", t)
+		if err != nil {
+			return nil, err
+		}
+		muts = append(muts, m)
+	}
+	for _, r := range s.Runs {
+		m, err := spanner.InsertOrUpdateStruct("Runs", r)
+		if err != nil {
+			return nil, err
+		}
+		muts = append(muts, m)
+	}
+	for _, r := range s.Results {
+		m, err := spanner.InsertOrUpdateStruct("Results", r)
+		if err != nil {
+			return nil, err
+		}
+		muts = append(muts, m)
+	}
+	for _, m1 := range s.TestRuns {
+		for _, tr := range m1 {
+			m, err := spanner.InsertOrUpdateStruct("TestRuns", tr)
+			if err != nil {
+				return nil, err
+			}
+			muts = append(muts, m)
+			m, err = spanner.InsertOrUpdateStruct("RunTests", tr)
+			if err != nil {
+				return nil, err
+			}
+			muts = append(muts, m)
+		}
+	}
+	for _, m1 := range s.TestResults {
+		for _, tr := range m1 {
+			m, err := spanner.InsertOrUpdateStruct("TestResults", tr)
+			if err != nil {
+				return nil, err
+			}
+			muts = append(muts, m)
+			m, err = spanner.InsertOrUpdateStruct("ResultTests", tr)
+			if err != nil {
+				return nil, err
+			}
+			muts = append(muts, m)
+		}
+	}
+	for _, m1 := range s.TestRunResults {
+		for _, m2 := range m1 {
+			for _, trr := range m2 {
+				m, err := spanner.InsertOrUpdateStruct("TestRunResults", trr)
+				if err != nil {
+					return nil, err
+				}
+				muts = append(muts, m)
+				m, err = spanner.InsertOrUpdateStruct("TestResultRuns", trr)
+				if err != nil {
+					return nil, err
+				}
+				muts = append(muts, m)
+				m, err = spanner.InsertOrUpdateStruct("RunTestResults", trr)
+				if err != nil {
+					return nil, err
+				}
+				muts = append(muts, m)
+				m, err = spanner.InsertOrUpdateStruct("RunResultTests", trr)
+				if err != nil {
+					return nil, err
+				}
+				muts = append(muts, m)
+				m, err = spanner.InsertOrUpdateStruct("ResultTestRuns", trr)
+				if err != nil {
+					return nil, err
+				}
+				muts = append(muts, m)
+				m, err = spanner.InsertOrUpdateStruct("ResultRunTests", trr)
+				if err != nil {
+					return nil, err
+				}
+				muts = append(muts, m)
+			}
+		}
+	}
+
+	return muts, nil
+}
 
 var (
 	projectID          = flag.String("project_id", "wptdashboard-staging", "Google Cloud Platform project id")
@@ -32,8 +314,8 @@ var (
 const (
 	outputSpannerInstanceID = "wpt-results"
 	outputSpannerDatabaseID = "results-bulgu"
-	numConcurrentRuns       = 10
-	numConcurrentBatches    = 100
+	numConcurrentRuns       = 2
+	numConcurrentBatches    = 50
 )
 
 var maxHeapAlloc = uint64(4.0e+10)
@@ -119,176 +401,63 @@ func loadRunReport(ctx context.Context, run *shared.TestRun) (*metrics.TestResul
 	return &report, nil
 }
 
-// func countReportResults(report *metrics.TestResultsReport) int64 {
-// 	count := int64(0)
-// 	for _, r := range report.Results {
-// 		if len(r.Subtests) == 0 {
-// 			count++
-// 		} else {
-// 			set := mapset.NewSet()
-// 			for _, s := range r.Subtests {
-// 				if set.Contains(s.Name) {
-// 					log.Warningf("Found test \"%s\" contains duplicate subtest name \"%s\"", r.Test, s.Name)
-// 				} else {
-// 					set.Add(s.Name)
-// 				}
-// 			}
-// 			count += int64(set.Cardinality())
-// 		}
-// 	}
-// 	return count
-// }
-
-// func countSpannerResults(ctx context.Context, client *spanner.Client, runID int64) (int64, error) {
-// 	params := map[string]interface{}{
-// 		"run_id": runID,
-// 	}
-// 	s := spanner.Statement{
-// 		SQL:    countStmt,
-// 		Params: params,
-// 	}
-
-// 	log.Infof("Spanner query: \"%s\" with %v", countStmt, params)
-
-// 	itr := client.Single().WithTimestampBound(spanner.MaxStaleness(1*time.Minute)).Query(ctx, s)
-// 	defer itr.Stop()
-// 	var count int64
-// 	for {
-// 		row, err := itr.Next()
-// 		if err == iterator.Done {
-// 			break
-// 		}
-// 		if err != nil {
-// 			return 0, err
-// 		}
-
-// 		err = row.Column(0, &count)
-// 		if err != nil {
-// 			return 0, err
-// 		}
-// 	}
-// 	return count, nil
-// }
-
-// func numRowsToUpload(ctx context.Context, client *spanner.Client, runID int64, report *metrics.TestResultsReport) (int64, error) {
-// 	totalRows := countReportResults(report)
-// 	existingRows, err := countSpannerResults(ctx, client, runID)
-// 	if err != nil {
-// 		return 0, err
-// 	}
-
-// 	log.Infof("Run %d contains %d rows (according to GCS); %d found in Spanner", runID, totalRows, existingRows)
-
-// 	return totalRows - existingRows, nil
-// }
-
-func uploadReport(ctx context.Context, client *spanner.Client, run shared.TestRun, report *metrics.TestResultsReport, batchSize int, numConcurrentBatches int64) error {
-	var numRows int64
+func uploadReport(ctx context.Context, client *spanner.Client, run *shared.TestRun, report *metrics.TestResultsReport, batchSize int, numConcurrentBatches int64) error {
 	var err error
 
-	log.Infof("Queuing rows for run %d", run.ID)
+	log.Infof("Preparing data for run %d", run.ID)
 
-	runs := make([]*spanner.Mutation, 0)
-	tests := make([]*spanner.Mutation, 0)
-	results := make(map[int64]*spanner.Mutation, 0)
-	testsResults := make([]*spanner.Mutation, 0)
-	testsResultsRuns := make([]*spanner.Mutation, 0)
-	testsRuns := make([]*spanner.Mutation, 0)
-	testsRunsResults := make([]*spanner.Mutation, 0)
-	runsTests := make([]*spanner.Mutation, 0)
-	runsTestsResults := make([]*spanner.Mutation, 0)
-	runsResults := make([]*spanner.Mutation, 0)
-	runsResultsTests := make([]*spanner.Mutation, 0)
-	resultsTests := make([]*spanner.Mutation, 0)
-	resultsTestsRuns := make([]*spanner.Mutation, 0)
-	resultsRuns := make([]*spanner.Mutation, 0)
-	resultsRunsTests := make([]*spanner.Mutation, 0)
+	ss := NewStructs()
 
-	hash, err := hex.DecodeString(run.FullRevisionHash)
+	r, err := NewRun(run)
 	if err != nil {
 		return err
 	}
-	runs = append(runs, spanner.InsertOrUpdateMap("Runs", map[string]interface{}{
-		"RunID":           run.ID,
-		"BrowserName":     run.BrowserName,
-		"BrowserVersion":  run.BrowserVersion,
-		"OSName":          run.OSName,
-		"OSVersion":       run.OSVersion,
-		"WPTRevisionHash": hash,
-		"ResultsURL":      run.ResultsURL,
-		"CreatedAt":       run.CreatedAt,
-		"TimeStart":       run.TimeStart,
-		"TimeEnd":         run.TimeEnd,
-		"RawResultsURL":   run.RawResultsURL,
-		"Labels":          run.Labels,
-	}))
+	ss.AddRun(r)
 
-	for _, r := range report.Results {
-		if len(r.Subtests) == 0 {
-			result := int64(metrics.TestStatusFromString(r.Status))
-			if m, ok := results[result]; !ok {
-				results[result] = spanner.InsertOrUpdateMap("Results", map[string]interface{}{
-					"ResultID": result,
-					"Name":     r.Status,
-				})
-			}
-
-			// NEXT TODO (here and in each-subtest case): Invoke helper that adds rows
-			// for all interleavings. Consider wrapping in struct.
-			row := map[string]interface{}{
-				"run_id":  runID,
-				"test":    r.Test,
-				"subtest": spanner.NullString{Valid: false},
-				"result":  int64(metrics.TestStatusFromString(r.Status)),
-			}
-			if r.Message != nil {
-				row["message"] = *r.Message
-			} else {
-				row["message"] = spanner.NullString{Valid: false}
-			}
-			rows = append(rows, spanner.ReplaceMap(*outputSpannerTableID, row))
+	for _, result := range report.Results {
+		if len(result.Subtests) == 0 {
+			t := NewTest(result.Test, nil)
+			ss.AddTest(t)
+			res := NewResult(result.Status, nil)
+			ss.AddResult(res)
+			ss.AddTestRun(t, r)
+			ss.AddTestResult(t, res)
+			ss.AddRunResult(r, res)
+			ss.AddTestRunResult(t, r, res, result.Message)
 		} else {
-			for _, s := range r.Subtests {
-				result := int64(metrics.TestStatusFromString(s.Status))
-				if m, ok := results[result]; !ok {
-					results[result] = spanner.InsertOrUpdateMap("Results", map[string]interface{}{
-						"ResultID": result,
-						"Name":     s.Status,
-					})
-				}
-				row := map[string]interface{}{
-					"run_id":  runID,
-					"test":    r.Test,
-					"subtest": s.Name,
-					"result":  int64(metrics.SubTestStatusFromString(s.Status)),
-				}
-				if s.Message != nil {
-					row["message"] = *s.Message
-				} else {
-					row["message"] = spanner.NullString{Valid: false}
-				}
-				rows = append(rows, spanner.ReplaceMap(*outputSpannerTableID, row))
+			for _, s := range result.Subtests {
+				t := NewTest(result.Test, &s.Name)
+				ss.AddTest(t)
+				res := NewResult(s.Status, nil)
+				ss.AddResult(res)
+				ss.AddTestRun(t, r)
+				ss.AddTestResult(t, res)
+				ss.AddRunResult(r, res)
+				ss.AddTestRunResult(t, r, res, s.Message)
 			}
 		}
 	}
 
-	log.Infof("Queued %d rows for run %d", len(rows), runID)
+	log.Infof("Generating row-based mutations for run %d", run.ID)
+	rows, err := ss.ToMutations()
+	if err != nil {
+		return err
+	}
+	log.Infof("Generated %d rows for run %d", len(rows), run.ID)
 
-	log.Infof("Creating transaction for %d-row write transaction for run %d", len(rows), runID)
-
-	log.Infof("Writing batches for %d-row run %d", len(rows), runID)
+	log.Infof("Writing batches for %d-row run %d", len(rows), run.ID)
 
 	s := semaphore.NewWeighted(numConcurrentBatches)
 	writeBatch := func(m, n int) {
 		defer s.Release(1)
 		batch := rows[m:n]
 
-		log.Infof("Writing batch for %d-row run %d: [%d,%d)", len(rows), runID, m, n)
+		log.Infof("Writing batch for %d-row run %d: [%d,%d)", len(rows), run.ID, m, n)
 		_, err := client.Apply(ctx, batch)
 		if err != nil {
-			log.Fatalf("Error writing batch for %d-row run %d: %v", len(rows), runID, err)
+			log.Fatalf("Error writing batch for %d-row run %d: %v", len(rows), run.ID, err)
 		} else {
-			log.Infof("Wrote batch for %d-row run %d: [%d,%d)", len(rows), runID, m, n)
+			log.Infof("Wrote batch for %d-row run %d: [%d,%d)", len(rows), run.ID, m, n)
 		}
 	}
 	var end int
@@ -298,13 +467,13 @@ func uploadReport(ctx context.Context, client *spanner.Client, run shared.TestRu
 	}
 	if end != len(rows) {
 		s.Acquire(ctx, 1)
-		log.Infof("Writing small batch for %d-row run %d: [%d,%d)", len(rows), runID, end-batchSize, len(rows))
+		log.Infof("Writing small batch for %d-row run %d: [%d,%d)", len(rows), run.ID, end-batchSize, len(rows))
 		go writeBatch(end-batchSize, len(rows))
-		log.Infof("Wrote small batch for %d-row run %d: [%d,%d)", len(rows), runID, end-batchSize, len(rows))
+		log.Infof("Wrote small batch for %d-row run %d: [%d,%d)", len(rows), run.ID, end-batchSize, len(rows))
 	}
 	s.Acquire(ctx, numConcurrentBatches)
 
-	log.Infof("Wrote batches for %d-row run %d", len(rows), runID)
+	log.Infof("Wrote batches for %d-row run %d", len(rows), run.ID)
 
 	return nil
 }
@@ -324,13 +493,13 @@ func main() {
 
 	_, runs := getLoadableRuns(ctx, dsClient)
 
-	sSpec := fmt.Sprintf("projects/%s/instances/%s/databases/%s", *projectID, *outputSpannerInstanceID, *outputSpannerDatabaseID)
+	sSpec := fmt.Sprintf("projects/%s/instances/%s/databases/%s", *projectID, outputSpannerInstanceID, outputSpannerDatabaseID)
 	sClient, err := spanner.NewClient(ctx, sSpec, option.WithCredentialsFile(*gcpCredentialsFile))
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	s := semaphore.NewWeighted(*numConcurrentRuns)
+	s := semaphore.NewWeighted(numConcurrentRuns)
 	for i, run := range runs {
 		s.Acquire(ctx, 1)
 
@@ -351,7 +520,7 @@ func main() {
 				}
 
 				return retry.Do(func() error {
-					return uploadReportIfIncomplete(ctx, sClient, run.ID, report, 1000, *numConcurrentBatches)
+					return uploadReport(ctx, sClient, run, report, 1000, numConcurrentBatches)
 				}, retry.Attempts(5), retry.OnRetry(func(n uint, err error) {
 					log.Infof("Recreating spanner client for retry")
 
@@ -370,7 +539,7 @@ func main() {
 			log.Infof("Finished processing run number %d / %d (id %d)", i, len(runs), run.ID)
 		}(i, &r)
 	}
-	s.Acquire(ctx, *numConcurrentRuns)
+	s.Acquire(ctx, numConcurrentRuns)
 
 	log.Infof("Import complete!")
 }
