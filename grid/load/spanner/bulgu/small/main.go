@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"runtime"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/datastore"
@@ -214,55 +215,71 @@ func (s *Structs) AddTestRunResult(t *Test, run *Run, res *Result, message *stri
 	}
 }
 
-func (s *Structs) ToMutations() ([]*spanner.Mutation, error) {
-	muts := make([]*spanner.Mutation, 0, len(s.Tests)+len(s.Runs)+len(s.Results)+len(s.TestRuns)+len(s.TestResults)+len(s.RunResults)+len(s.TestRunResults))
+func (s *Structs) ToMutations() ([]*spanner.Mutation, []*spanner.Mutation, []*spanner.Mutation, error) {
+	m1s := make([]*spanner.Mutation, 0, len(s.Tests)+len(s.Runs)+len(s.Results))
+	m2s := make([]*spanner.Mutation, 0, len(s.TestRuns)+len(s.TestResults)+len(s.RunResults))
+	m3s := make([]*spanner.Mutation, 0, len(s.TestRunResults))
 	for _, t := range s.Tests {
 		m, err := spanner.InsertOrUpdateStruct("Tests", t)
 		if err != nil {
-			return nil, err
+			return nil, nil, nil, err
 		}
-		muts = append(muts, m)
+		m1s = append(m1s, m)
 	}
 	for _, r := range s.Runs {
 		m, err := spanner.InsertOrUpdateStruct("Runs", r)
 		if err != nil {
-			return nil, err
+			return nil, nil, nil, err
 		}
-		muts = append(muts, m)
+		m1s = append(m1s, m)
 	}
 	for _, r := range s.Results {
 		m, err := spanner.InsertOrUpdateStruct("Results", r)
 		if err != nil {
-			return nil, err
+			return nil, nil, nil, err
 		}
-		muts = append(muts, m)
+		m1s = append(m1s, m)
 	}
 	for _, m1 := range s.TestRuns {
 		for _, tr := range m1 {
 			m, err := spanner.InsertOrUpdateStruct("TestRuns", tr)
 			if err != nil {
-				return nil, err
+				return nil, nil, nil, err
 			}
-			muts = append(muts, m)
+			m2s = append(m2s, m)
 			m, err = spanner.InsertOrUpdateStruct("RunTests", tr)
 			if err != nil {
-				return nil, err
+				return nil, nil, nil, err
 			}
-			muts = append(muts, m)
+			m2s = append(m2s, m)
 		}
 	}
 	for _, m1 := range s.TestResults {
 		for _, tr := range m1 {
 			m, err := spanner.InsertOrUpdateStruct("TestResults", tr)
 			if err != nil {
-				return nil, err
+				return nil, nil, nil, err
 			}
-			muts = append(muts, m)
+			m2s = append(m2s, m)
 			m, err = spanner.InsertOrUpdateStruct("ResultTests", tr)
 			if err != nil {
-				return nil, err
+				return nil, nil, nil, err
 			}
-			muts = append(muts, m)
+			m2s = append(m2s, m)
+		}
+	}
+	for _, m1 := range s.RunResults {
+		for _, rr := range m1 {
+			m, err := spanner.InsertOrUpdateStruct("RunResults", rr)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			m2s = append(m2s, m)
+			m, err = spanner.InsertOrUpdateStruct("ResultRuns", rr)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			m2s = append(m2s, m)
 		}
 	}
 	for _, m1 := range s.TestRunResults {
@@ -270,39 +287,39 @@ func (s *Structs) ToMutations() ([]*spanner.Mutation, error) {
 			for _, trr := range m2 {
 				m, err := spanner.InsertOrUpdateStruct("TestRunResults", trr)
 				if err != nil {
-					return nil, err
+					return nil, nil, nil, err
 				}
-				muts = append(muts, m)
+				m3s = append(m3s, m)
 				m, err = spanner.InsertOrUpdateStruct("TestResultRuns", trr)
 				if err != nil {
-					return nil, err
+					return nil, nil, nil, err
 				}
-				muts = append(muts, m)
+				m3s = append(m3s, m)
 				m, err = spanner.InsertOrUpdateStruct("RunTestResults", trr)
 				if err != nil {
-					return nil, err
+					return nil, nil, nil, err
 				}
-				muts = append(muts, m)
+				m3s = append(m3s, m)
 				m, err = spanner.InsertOrUpdateStruct("RunResultTests", trr)
 				if err != nil {
-					return nil, err
+					return nil, nil, nil, err
 				}
-				muts = append(muts, m)
+				m3s = append(m3s, m)
 				m, err = spanner.InsertOrUpdateStruct("ResultTestRuns", trr)
 				if err != nil {
-					return nil, err
+					return nil, nil, nil, err
 				}
-				muts = append(muts, m)
+				m3s = append(m3s, m)
 				m, err = spanner.InsertOrUpdateStruct("ResultRunTests", trr)
 				if err != nil {
-					return nil, err
+					return nil, nil, nil, err
 				}
-				muts = append(muts, m)
+				m3s = append(m3s, m)
 			}
 		}
 	}
 
-	return muts, nil
+	return m1s, m2s, m3s, nil
 }
 
 var (
@@ -362,7 +379,7 @@ func getLoadableRuns(ctx context.Context, client *datastore.Client) ([]*datastor
 			testRuns = append(testRuns, testRun)
 		}
 	}
-	return keys[0:20], testRuns[0:20]
+	return keys[0:8], testRuns[0:8]
 }
 
 func loadRunReport(ctx context.Context, run *shared.TestRun) (*metrics.TestResultsReport, error) {
@@ -439,41 +456,70 @@ func uploadReport(ctx context.Context, client *spanner.Client, run *shared.TestR
 	}
 
 	log.Infof("Generating row-based mutations for run %d", run.ID)
-	rows, err := ss.ToMutations()
+	r1s, r2s, r3s, err := ss.ToMutations()
 	if err != nil {
 		return err
 	}
-	log.Infof("Generated %d rows for run %d", len(rows), run.ID)
+	numRows := len(r2s) + len(r2s) + len(r3s)
+	log.Infof("Generated %d rows for run %d", numRows, run.ID)
 
-	log.Infof("Writing batches for %d-row run %d", len(rows), run.ID)
+	log.Infof("Writing batches for %d-row run %d", numRows, run.ID)
 
 	s := semaphore.NewWeighted(numConcurrentBatches)
-	writeBatch := func(m, n int) {
-		defer s.Release(1)
+	writeBatch := func(batchSync *semaphore.Weighted, rowGroupSync *sync.WaitGroup, rows []*spanner.Mutation, m, n int) {
+		defer rowGroupSync.Done()
+		defer batchSync.Release(1)
 		batch := rows[m:n]
 
-		log.Infof("Writing batch for %d-row run %d: [%d,%d)", len(rows), run.ID, m, n)
-		_, err := client.Apply(ctx, batch)
-		if err != nil {
-			log.Fatalf("Error writing batch for %d-row run %d: %v", len(rows), run.ID, err)
-		} else {
+		err := retry.Do(func() error {
+			log.Infof("Writing batch for %d-row run %d: [%d,%d)", len(rows), run.ID, m, n)
+
+			newCtx, cancel := context.WithTimeout(ctx, time.Second*60)
+			defer cancel()
+
+			_, err := client.Apply(newCtx, batch)
+			if err != nil {
+				log.Errorf("Error writing batch for %d-row run %d: %v", len(rows), run.ID, err)
+				return err
+			}
+
 			log.Infof("Wrote batch for %d-row run %d: [%d,%d)", len(rows), run.ID, m, n)
+			return nil
+		}, retry.Attempts(5), retry.OnRetry(func(n uint, err error) {
+			log.Warningf("Retrying failed batch batch for %d-row run %d: [%d,%d): %v", len(rows), run.ID, m, n, err)
+		}))
+		if err != nil {
+			log.Fatal(err)
 		}
 	}
-	var end int
-	for end = batchSize; end <= len(rows); end += batchSize {
-		s.Acquire(ctx, 1)
-		go writeBatch(end-batchSize, end)
+	writeRows := func(rows []*spanner.Mutation) *sync.WaitGroup {
+		var wg sync.WaitGroup
+		var end int
+		for end = batchSize; end <= len(rows); end += batchSize {
+			wg.Add(1)
+			s.Acquire(ctx, 1)
+			go writeBatch(s, &wg, rows[0:], end-batchSize, end)
+		}
+		if end != len(rows) {
+			wg.Add(1)
+			s.Acquire(ctx, 1)
+			log.Infof("Writing small batch for %d-row run %d: [%d,%d)", len(rows), run.ID, end-batchSize, len(rows))
+			go writeBatch(s, &wg, rows[0:], end-batchSize, len(rows))
+			log.Infof("Wrote small batch for %d-row run %d: [%d,%d)", len(rows), run.ID, end-batchSize, len(rows))
+		}
+		return &wg
 	}
-	if end != len(rows) {
-		s.Acquire(ctx, 1)
-		log.Infof("Writing small batch for %d-row run %d: [%d,%d)", len(rows), run.ID, end-batchSize, len(rows))
-		go writeBatch(end-batchSize, len(rows))
-		log.Infof("Wrote small batch for %d-row run %d: [%d,%d)", len(rows), run.ID, end-batchSize, len(rows))
-	}
-	s.Acquire(ctx, numConcurrentBatches)
 
-	log.Infof("Wrote batches for %d-row run %d", len(rows), run.ID)
+	log.Infof("Writing %d layer-1 rows run %d", len(r1s), run.ID)
+	writeRows(r1s).Wait()
+
+	log.Infof("Writing %d layer-2 rows run %d", len(r2s), run.ID)
+	writeRows(r2s).Wait()
+
+	log.Infof("Writing %d layer-3 rows run %d", len(r3s), run.ID)
+	writeRows(r3s).Wait()
+
+	log.Infof("Wrote batches for %d-row run %d", numRows, run.ID)
 
 	return nil
 }
