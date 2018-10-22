@@ -4,7 +4,7 @@ type RunID int64
 type ResultID int64
 
 type Results struct {
-	ByRunResult map[RunID]map[ResultID][]TestID
+	ByRunTest map[RunID]map[TestID]ResultID
 }
 
 const (
@@ -13,44 +13,50 @@ const (
 )
 
 func NewResults() *Results {
-	return &Results{ByRunResult: make(map[RunID]map[ResultID][]TestID)}
+	return &Results{ByRunTest: make(map[RunID]map[TestID]ResultID)}
 }
 
 func (rs *Results) Add(ru RunID, re ResultID, t TestID) {
-	if _, ok := rs.ByRunResult[ru]; !ok {
-		rs.ByRunResult[ru] = make(map[ResultID][]TestID)
+	if _, ok := rs.ByRunTest[ru]; !ok {
+		rs.ByRunTest[ru] = make(map[TestID]ResultID)
 	}
-	if _, ok := rs.ByRunResult[ru][re]; !ok {
-		rs.ByRunResult[ru][re] = make([]TestID, 0, initialResultsCap)
-	}
-	rs.ByRunResult[ru][re] = append(rs.ByRunResult[ru][re], t)
+	rs.ByRunTest[ru][t] = re
 }
 
-func (rs *Results) QuerySlice(ru RunID, re ResultID) []TestID {
-	if _, ok := rs.ByRunResult[ru]; !ok {
-		return nil
-	}
-	if _, ok := rs.ByRunResult[ru][re]; !ok {
-		return nil
-	}
-	return rs.ByRunResult[ru][re][0:]
-}
-
-func (rs *Results) QueryChan(ru RunID, re ResultID) chan TestID {
-	if _, ok := rs.ByRunResult[ru]; !ok {
-		return nil
-	}
-	if _, ok := rs.ByRunResult[ru][re]; !ok {
-		return nil
-	}
-
+func (rs *Results) QueryChan(ru RunID, re ResultID, in chan TestID) chan TestID {
 	res := make(chan TestID)
-	go func(ts []TestID) {
-		for _, t := range ts {
+	go func(byTest map[TestID]ResultID) {
+		for {
+			t := <-in
+			if t == testEOF {
+				break
+			}
+			if byTest[t] == re {
+				res <- t
+			}
+		}
+		res <- testEOF
+	}(rs.ByRunTest[ru])
+	return res
+}
+
+func (rs *Results) QueryAll(ru RunID, re ResultID) chan TestID {
+	res := make(chan TestID)
+	go func() {
+		byTest, ok := rs.ByRunTest[ru]
+		if !ok {
+			res <- testEOF
+			return
+		}
+
+		for t, result := range byTest {
+			if result != re {
+				continue
+			}
 			res <- t
 		}
 		res <- testEOF
-	}(rs.ByRunResult[ru][re][0:])
+	}()
 	return res
 }
 

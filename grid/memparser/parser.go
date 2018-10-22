@@ -11,15 +11,12 @@ import (
 )
 
 type Queryable interface {
-	Run(*mem.Tests, *mem.Results) chan mem.TestID
+	RunAll(*mem.Tests, *mem.Results) chan mem.TestID
+	RunChan(*mem.Tests, *mem.Results, chan mem.TestID) chan mem.TestID
 }
 
 type NameFragment struct {
 	Name string
-}
-
-func (nf *NameFragment) Run(ts *mem.Tests, rs *mem.Results) chan mem.TestID {
-	return ts.QueryChan(nf.Name)
 }
 
 type ResultOp struct {
@@ -32,28 +29,8 @@ type ResultFragment struct {
 	ResultID mem.ResultID
 }
 
-func (rf *ResultFragment) Run(ts *mem.Tests, rs *mem.Results) chan mem.TestID {
-	if rf.Op.Name == "EQ" {
-		return rs.QueryChan(rf.RunID, rf.ResultID)
-	}
-	// TODO: More operators and/or error handling.
-	return nil
-}
-
 type And struct {
-	Parts []Queryable
-}
-
-func (a *And) Run(ts *mem.Tests, rs *mem.Results) chan mem.TestID {
-	var c chan mem.TestID
-	for _, p := range a.Parts {
-		if c == nil {
-			c = p.Run(ts, rs)
-			continue
-		}
-		c = mem.AndChan(c, p.Run(ts, rs))
-	}
-	return c
+	Parts []Plannable
 }
 
 var (
@@ -101,22 +78,22 @@ var (
 			return parsec.ParsecNode(pns[0])
 		}
 
-		qs := make([]Queryable, 0)
+		qs := make([]Plannable, 0)
 		for _, pn := range pns {
-			qs = append(qs, pn.(Queryable))
+			qs = append(qs, pn.(Plannable))
 		}
 		return &And{qs}
 	}
 )
 
-func Parse(query string) (Queryable, error) {
+func Parse(query string) (Plan, error) {
 	pn, s := q(parsec.NewScanner([]byte(query)))
 	if !s.Endof() {
 		return nil, errors.New("Parse did not consume all input")
 	}
-	qable, ok := pn.(Queryable)
+	qable, ok := pn.(Plannable)
 	if !ok {
 		return nil, errors.New("Parser returned unexpected type of result")
 	}
-	return qable, nil
+	return qable.ToPlan(), nil
 }

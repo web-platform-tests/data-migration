@@ -10,7 +10,7 @@ import (
 type TestID uint64
 
 type Tests struct {
-	Tests map[string]TestID
+	Tests map[TestID]string
 }
 
 const (
@@ -19,7 +19,7 @@ const (
 )
 
 func NewTests() *Tests {
-	return &Tests{Tests: make(map[string]TestID)}
+	return &Tests{Tests: make(map[TestID]string)}
 }
 
 func (ts *Tests) Add(name string, subPtr *string) (TestID, error) {
@@ -28,25 +28,32 @@ func (ts *Tests) Add(name string, subPtr *string) (TestID, error) {
 		return id, err
 	}
 
-	ts.Tests[str] = id
+	ts.Tests[id] = str
 
 	return id, nil
 }
 
-func (ts *Tests) QuerySlice(q string) []TestID {
-	res := make([]TestID, 0, initialQueryResultCap)
-	for str, id := range ts.Tests {
-		if strings.Contains(str, q) {
-			res = append(res, id)
+func (ts *Tests) QueryChan(q string, in chan TestID) chan TestID {
+	res := make(chan TestID)
+	go func() {
+		for {
+			id := <-in
+			if id == testEOF {
+				break
+			}
+			if str, ok := ts.Tests[id]; ok && strings.Contains(str, q) {
+				res <- id
+			}
 		}
-	}
+		res <- testEOF
+	}()
 	return res
 }
 
-func (ts *Tests) QueryChan(q string) chan TestID {
+func (ts *Tests) QueryAll(q string) chan TestID {
 	res := make(chan TestID)
 	go func() {
-		for str, id := range ts.Tests {
+		for id, str := range ts.Tests {
 			if strings.Contains(str, q) {
 				res <- id
 			}
