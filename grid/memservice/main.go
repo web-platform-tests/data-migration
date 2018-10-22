@@ -117,6 +117,7 @@ func loadRunHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	run.ID = runID
 
 	log.Infof("Loading run %v", run)
 
@@ -173,7 +174,7 @@ func qHandler(w http.ResponseWriter, r *http.Request) {
 	log.Infof("Processing query: %v", qable)
 
 	t0 := time.Now()
-	c := qable.Run(tests, results)
+	c := qable.RunAll(tests, results)
 	res := make([]mem.TestID, 0)
 	for {
 		v := <-c
