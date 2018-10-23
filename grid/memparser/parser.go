@@ -30,7 +30,7 @@ type ResultFragment struct {
 }
 
 type And struct {
-	Parts []Plannable
+	Parts []Filterable
 }
 
 var (
@@ -78,22 +78,22 @@ var (
 			return parsec.ParsecNode(pns[0])
 		}
 
-		qs := make([]Plannable, 0)
+		qs := make([]Filterable, 0)
 		for _, pn := range pns {
-			qs = append(qs, pn.(Plannable))
+			qs = append(qs, pn.(Filterable))
 		}
 		return &And{qs}
 	}
 )
 
-func Parse(query string) (Plan, error) {
+func Parse(query string) (Filterable, error) {
 	pn, s := q(parsec.NewScanner([]byte(query)))
 	if !s.Endof() {
 		return nil, errors.New("Parse did not consume all input")
 	}
-	qable, ok := pn.(Plannable)
+	fable, ok := pn.(Filterable)
 	if !ok {
 		return nil, errors.New("Parser returned unexpected type of result")
 	}
-	return qable.ToPlan(), nil
+	return fable, nil
 }

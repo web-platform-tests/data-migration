@@ -13,59 +13,52 @@ type Tests struct {
 	Tests map[TestID]string
 }
 
+// type TestIndex struct {
+// 	Shards []*Tests
+// }
+
 const (
-	initialQueryResultCap = 10
-	testEOF               = TestID(0)
+	testEOF = TestID(0)
 )
+
+// func NewTestIndex(n int) *TestIndex {
+// 	tss := make([]*Tests, n)
+// 	for i := range tss {
+// 		tss[i] = NewTests()
+// 	}
+// 	return &TestIndex{tss}
+// }
 
 func NewTests() *Tests {
 	return &Tests{Tests: make(map[TestID]string)}
 }
 
-func (ts *Tests) Add(name string, subPtr *string) (TestID, error) {
-	id, str, err := computeID(name, subPtr)
-	if err != nil {
-		return id, err
-	}
+// func (ti *TestIndex) Add(name string, subPtr *string) (TestID, error) {
+// 	id, str, err := computeID(name, subPtr)
+// 	if err != nil {
+// 		return id, err
+// 	}
+// 	si := uint64(id) % uint64(len(ti.Shards))
+// 	ti.Shards[si].Add(id, str)
+// 	return id, nil
+// }
 
+func (ts *Tests) Add(id TestID, str string) {
 	ts.Tests[id] = str
-
-	return id, nil
 }
 
-func (ts *Tests) QueryChan(q string, in chan TestID) chan TestID {
-	res := make(chan TestID)
-	go func() {
-		for {
-			id := <-in
-			if id == testEOF {
-				break
-			}
-			if str, ok := ts.Tests[id]; ok && strings.Contains(str, q) {
-				res <- id
-			}
+func (ts *Tests) GetName(id TestID) string {
+	return strings.Split(ts.Tests[id], "\x00")[0]
+}
+
+func TestFilter(q string) Filter {
+	return func(ts *Tests, rs *Results, t TestID) bool {
+		str, ok := ts.Tests[t]
+		if !ok {
+			return false
 		}
-		res <- testEOF
-	}()
-	return res
-}
-
-func (ts *Tests) QueryAll(q string) chan TestID {
-	res := make(chan TestID)
-	go func() {
-		for id, str := range ts.Tests {
-			if strings.Contains(str, q) {
-				res <- id
-			}
-		}
-		res <- testEOF
-	}()
-	return res
-}
-
-func (ts *Tests) Lookup(name string, subPtr *string) (TestID, error) {
-	id, _, err := computeID(name, subPtr)
-	return id, err
+		return strings.Contains(str, q)
+	}
 }
 
 func computeID(name string, subPtr *string) (TestID, string, error) {
@@ -83,8 +76,4 @@ func computeID(name string, subPtr *string) (TestID, string, error) {
 	}
 
 	return id, str, nil
-}
-
-func (ts *Tests) EOF() TestID {
-	return testEOF
 }

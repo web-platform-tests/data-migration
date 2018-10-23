@@ -1,5 +1,9 @@
 package mem
 
+import (
+	"github.com/web-platform-tests/wpt.fyi/shared"
+)
+
 type RunID int64
 type ResultID int64
 
@@ -7,14 +11,32 @@ type Results struct {
 	ByRunTest map[RunID]map[TestID]ResultID
 }
 
+// type ResultIndex struct {
+// 	Shards []*Results
+// }
+
 const (
 	initialResultsCap = 10
 	resultEOF         = ResultID(0)
 )
 
+// func NewResultIndex(n int) *ResultIndex {
+// 	rss := make([]*Results, n)
+// 	for i := range rss {
+// 		rss[i] = NewResults()
+// 	}
+// 	return &ResultIndex{rss}
+// }
+
 func NewResults() *Results {
 	return &Results{ByRunTest: make(map[RunID]map[TestID]ResultID)}
 }
+
+// func (ri *ResultIndex) Add(ru RunID, re ResultID, t TestID) error {
+// 	si := uint64(t) % uint64(len(ri.Shards))
+// 	ri.Shards[si].Add(ru, re, t)
+// 	return nil
+// }
 
 func (rs *Results) Add(ru RunID, re ResultID, t TestID) {
 	if _, ok := rs.ByRunTest[ru]; !ok {
@@ -23,43 +45,25 @@ func (rs *Results) Add(ru RunID, re ResultID, t TestID) {
 	rs.ByRunTest[ru][t] = re
 }
 
-func (rs *Results) QueryChan(ru RunID, re ResultID, in chan TestID) chan TestID {
-	res := make(chan TestID)
-	go func(byTest map[TestID]ResultID) {
-		for {
-			t := <-in
-			if t == testEOF {
-				break
-			}
-			if byTest[t] == re {
-				res <- t
-			}
-		}
-		res <- testEOF
-	}(rs.ByRunTest[ru])
-	return res
+func (rs *Results) GetResult(ru RunID, t TestID) ResultID {
+	byTest, ok := rs.ByRunTest[ru]
+	if !ok {
+		return ResultID(shared.TestStatusUnknown)
+	}
+	re, ok := byTest[t]
+	if !ok {
+		return ResultID(shared.TestStatusUnknown)
+	}
+	return re
 }
 
-func (rs *Results) QueryAll(ru RunID, re ResultID) chan TestID {
-	res := make(chan TestID)
-	go func() {
+func ResultFilter(ru RunID, re ResultID) Filter {
+	return func(ts *Tests, rs *Results, t TestID) bool {
 		byTest, ok := rs.ByRunTest[ru]
 		if !ok {
-			res <- testEOF
-			return
+			return false
 		}
-
-		for t, result := range byTest {
-			if result != re {
-				continue
-			}
-			res <- t
-		}
-		res <- testEOF
-	}()
-	return res
-}
-
-func (rs *Results) EOF() TestID {
-	return testEOF
+		result, ok := byTest[t]
+		return ok && result == re
+	}
 }
