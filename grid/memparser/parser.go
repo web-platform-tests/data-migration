@@ -33,25 +33,36 @@ type And struct {
 	Parts []Filterable
 }
 
+type Or struct {
+	Parts []Filterable
+}
+
 var (
-	ws        = parsec.TokenExact(`[ \t\r\n\v]+`, "WHITESPACE")
-	nameTok   = parsec.Token(`[a-zA-Z/._][0-9a-zA-Z/._-]*`, "NAME")
-	nameExpr  = parsec.And(nameExprF, nameTok)
-	id        = parsec.Int()
-	pass      = parsec.Token(`PASS`, "PASS")
-	ok        = parsec.Token(`OK`, "OK")
-	errStatus = parsec.Token(`ERROR`, "ERROR")
-	timeout   = parsec.Token(`TIMEOUT`, "TIMEOUT")
-	notRun    = parsec.Token(`NOT_RUN`, "NOT_RUN")
-	fail      = parsec.Token(`FAIL`, "FAIL")
-	crash     = parsec.Token(`CRASH`, "CRASH")
-	unknown   = parsec.Token(`UNKNOWN`, "UNKNOWN")
-	status    = parsec.OrdChoice(statusF, pass, ok, errStatus, timeout, notRun, fail, unknown)
-	eq        = parsec.Token("=", "EQ")
-	//neq        = parsec.Token("!=", "NEQ")
-	statusOp   = parsec.OrdChoice(first, eq /*, neq*/)
+	ws         = parsec.TokenExact(`[ \t\r\n\v]+`, "WHITESPACE")
+	and        = parsec.Token(`([aA][nN][dD]|[&])`, "AND")
+	or         = parsec.Token(`([oO][rR]|[|])`, "OR")
+	nameTok    = parsec.Token(`[a-zA-Z/._][0-9a-zA-Z/._-]*`, "NAME")
+	nameExpr   = parsec.And(nameExprF, nameTok)
+	id         = parsec.Int()
+	pass       = parsec.Token(`PASS`, "PASS")
+	ok         = parsec.Token(`OK`, "OK")
+	errStatus  = parsec.Token(`ERROR`, "ERROR")
+	timeout    = parsec.Token(`TIMEOUT`, "TIMEOUT")
+	notRun     = parsec.Token(`NOT_RUN`, "NOT_RUN")
+	fail       = parsec.Token(`FAIL`, "FAIL")
+	crash      = parsec.Token(`CRASH`, "CRASH")
+	unknown    = parsec.Token(`UNKNOWN`, "UNKNOWN")
+	status     = parsec.OrdChoice(statusF, pass, ok, errStatus, timeout, notRun, fail, unknown)
+	eq         = parsec.Token("=", "EQ")
+	neq        = parsec.Token("!=", "NEQ")
+	statusOp   = parsec.OrdChoice(first, eq, neq)
 	statusExpr = parsec.And(statusExprF, id, statusOp, status)
-	q          = parsec.Many(qF, parsec.OrdChoice(first, nameExpr, statusExpr), ws)
+	atomExpr   = parsec.OrdChoice(first, nameExpr, statusExpr)
+	andExpr    = parsec.And(andExprF, atomExpr, parsec.Maybe(first, and), atomExpr)
+	orExpr     = parsec.And(orExprF, atomExpr, or, atomExpr)
+	innerExpr  = parsec.OrdChoice(first, orExpr, andExpr, atomExpr)
+	parenExpr  parsec.Parser // Defined in init() to avoid parenExpr<-->expr loop.
+	expr       = parsec.OrdChoice(first, &parenExpr, innerExpr)
 
 	first = func(pns []parsec.ParsecNode) parsec.ParsecNode {
 		return pns[0]
@@ -70,24 +81,23 @@ var (
 		name := pns[0].(*parsec.Terminal).GetValue()
 		return parsec.ParsecNode(&NameFragment{name})
 	}
-	qF = func(pns []parsec.ParsecNode) parsec.ParsecNode {
-		if len(pns) == 0 {
-			return nil
-		}
-		if len(pns) == 1 {
-			return parsec.ParsecNode(pns[0])
-		}
-
-		qs := make([]Filterable, 0)
-		for _, pn := range pns {
-			qs = append(qs, pn.(Filterable))
-		}
-		return &And{qs}
+	andExprF = func(pns []parsec.ParsecNode) parsec.ParsecNode {
+		return &And{[]Filterable{pns[0].(Filterable), pns[2].(Filterable)}}
+	}
+	orExprF = func(pns []parsec.ParsecNode) parsec.ParsecNode {
+		return &Or{[]Filterable{pns[0].(Filterable), pns[2].(Filterable)}}
+	}
+	parenExprF = func(pns []parsec.ParsecNode) parsec.ParsecNode {
+		return pns[1]
 	}
 )
 
+func init() {
+	parenExpr = parsec.And(parenExprF, parsec.Token(`[(]`, "LPAREN"), &expr, parsec.Token(`[)]`, "RPAREN"))
+}
+
 func Parse(query string) (Filterable, error) {
-	pn, s := q(parsec.NewScanner([]byte(query)))
+	pn, s := expr(parsec.NewScanner([]byte(query)))
 	if !s.Endof() {
 		return nil, errors.New("Parse did not consume all input")
 	}

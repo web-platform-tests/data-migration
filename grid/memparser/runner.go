@@ -76,6 +76,14 @@ func (a *And) ToFilter() mem.Filter {
 	return mem.And(append(names, append(misc, results...)...)...)
 }
 
+func (a *Or) ToFilter() mem.Filter {
+	fs := make([]mem.Filter, 0, len(a.Parts))
+	for _, p := range a.Parts {
+		fs = append(fs, p.ToFilter())
+	}
+	return mem.Or(fs...)
+}
+
 // func (a *And) ToPlan() Plan {
 // 	if len(a.Parts) == 0 {
 // 		return nil
