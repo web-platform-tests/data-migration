@@ -1,7 +1,6 @@
 package mem
 
 import (
-	"fmt"
 	"strings"
 
 	farm "github.com/dgryski/go-farm"
@@ -13,35 +12,19 @@ type Tests struct {
 	Tests map[TestID]string
 }
 
-// type TestIndex struct {
-// 	Shards []*Tests
-// }
-
-const (
-	testEOF = TestID(0)
-)
-
-// func NewTestIndex(n int) *TestIndex {
-// 	tss := make([]*Tests, n)
-// 	for i := range tss {
-// 		tss[i] = NewTests()
-// 	}
-// 	return &TestIndex{tss}
-// }
-
 func NewTests() *Tests {
 	return &Tests{Tests: make(map[TestID]string)}
 }
 
-// func (ti *TestIndex) Add(name string, subPtr *string) (TestID, error) {
-// 	id, str, err := computeID(name, subPtr)
-// 	if err != nil {
-// 		return id, err
-// 	}
-// 	si := uint64(id) % uint64(len(ti.Shards))
-// 	ti.Shards[si].Add(id, str)
-// 	return id, nil
-// }
+func (ts *Tests) Copy() *Tests {
+	nu := &Tests{}
+	m := make(map[TestID]string)
+	for a, b := range ts.Tests {
+		m[a] = b
+	}
+	nu.Tests = m
+	return nu
+}
 
 func (ts *Tests) Add(id TestID, str string) {
 	ts.Tests[id] = str
@@ -62,18 +45,11 @@ func TestFilter(q string) Filter {
 }
 
 func computeID(name string, subPtr *string) (TestID, string, error) {
-	var id TestID
 	var str string
 	if subPtr != nil && *subPtr != "" {
 		str = name + "\x00" + *subPtr
 	} else {
 		str = name
 	}
-	id = TestID(farm.Fingerprint64([]byte(str)))
-
-	if id == testEOF {
-		return id, str, fmt.Errorf("Invalid TestID computed from name=%v, sub=%v", name, subPtr)
-	}
-
-	return id, str, nil
+	return TestID(farm.Fingerprint64([]byte(str))), str, nil
 }

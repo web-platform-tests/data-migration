@@ -1,5 +1,10 @@
 package mem
 
+import (
+	"github.com/web-platform-tests/results-analysis/metrics"
+	"github.com/web-platform-tests/wpt.fyi/shared"
+)
+
 type TestsResults struct {
 	Tests   *Tests
 	Results *Results
@@ -7,11 +12,6 @@ type TestsResults struct {
 
 type TestResultIndex struct {
 	Shards []*TestsResults
-}
-
-type Query struct {
-	F   Filter
-	Out chan TestID
 }
 
 type NamedTest struct {
@@ -22,6 +22,11 @@ type NamedTest struct {
 type TestResult struct {
 	Test   TestID
 	Result ResultID
+}
+
+type RunResults struct {
+	RunID
+	Results []*metrics.TestResults
 }
 
 func (tr *TestsResults) Execute(f Filter) []TestID {
@@ -45,7 +50,39 @@ func NewIndex(n int) *TestResultIndex {
 	return &TestResultIndex{tr}
 }
 
-func (i *TestResultIndex) Add(name string, subPtr *string, ru RunID, re ResultID) error {
+func (i *TestResultIndex) Copy() *TestResultIndex {
+	nu := &TestResultIndex{}
+	ss := make([]*TestsResults, len(i.Shards))
+	for j := range ss {
+		ss[j] = &TestsResults{
+			Tests:   i.Shards[j].Tests.Copy(),
+			Results: i.Shards[j].Results.Copy(),
+		}
+	}
+	nu.Shards = ss
+	return nu
+}
+
+func (i *TestResultIndex) WithRunResults(rrs ...RunResults) (*TestResultIndex, error) {
+	nu := i.Copy()
+	for _, rr := range rrs {
+		for _, r := range rr.Results {
+			err := nu.add(r.Test, nil, rr.RunID, ResultID(shared.TestStatusValueFromString(r.Status)))
+			if err != nil {
+				return nil, err
+			}
+			for _, r2 := range r.Subtests {
+				err := nu.add(r.Test, &r2.Name, rr.RunID, ResultID(shared.TestStatusValueFromString(r2.Status)))
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	return nu, nil
+}
+
+func (i *TestResultIndex) add(name string, subPtr *string, ru RunID, re ResultID) error {
 	id, str, err := computeID(name, subPtr)
 	if err != nil {
 		return err

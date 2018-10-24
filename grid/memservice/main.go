@@ -66,19 +66,15 @@ func loadRun(run *shared.TestRun) error {
 		return fmt.Errorf("Report at %s contains no results", run.RawResultsURL)
 	}
 
-	for _, r := range report.Results {
-		err := idx.Add(r.Test, nil, mem.RunID(run.ID), mem.ResultID(shared.TestStatusValueFromString(r.Status)))
-		if err != nil {
-			return err
-		}
-		for _, r2 := range r.Subtests {
-			err := idx.Add(r.Test, &r2.Name, mem.RunID(run.ID), mem.ResultID(shared.TestStatusValueFromString(r2.Status)))
-			if err != nil {
-				return err
-			}
-		}
+	newIdx, err := idx.WithRunResults(mem.RunResults{
+		RunID:   mem.RunID(run.ID),
+		Results: report.Results,
+	})
+	if err != nil {
+		return err
 	}
 
+	idx = newIdx
 	return nil
 }
 
@@ -265,6 +261,9 @@ func loadInitialRuns() {
 		log.Warningf("Error loading initial runs: %v", err)
 		return
 	}
+
+	// TODO: This strategy performs copy-and-add for every run; consider loading
+	// in larger batches.
 	for i := range runs {
 		runs[i].ID = keys[i].ID
 		if err := loadRun(&runs[i]); err != nil {

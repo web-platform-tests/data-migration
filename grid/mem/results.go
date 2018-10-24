@@ -11,32 +11,23 @@ type Results struct {
 	ByRunTest map[RunID]map[TestID]ResultID
 }
 
-// type ResultIndex struct {
-// 	Shards []*Results
-// }
-
-const (
-	initialResultsCap = 10
-	resultEOF         = ResultID(0)
-)
-
-// func NewResultIndex(n int) *ResultIndex {
-// 	rss := make([]*Results, n)
-// 	for i := range rss {
-// 		rss[i] = NewResults()
-// 	}
-// 	return &ResultIndex{rss}
-// }
-
 func NewResults() *Results {
 	return &Results{ByRunTest: make(map[RunID]map[TestID]ResultID)}
 }
 
-// func (ri *ResultIndex) Add(ru RunID, re ResultID, t TestID) error {
-// 	si := uint64(t) % uint64(len(ri.Shards))
-// 	ri.Shards[si].Add(ru, re, t)
-// 	return nil
-// }
+func (rs *Results) Copy() *Results {
+	nu := &Results{}
+	m1 := make(map[RunID]map[TestID]ResultID)
+	for a, b := range rs.ByRunTest {
+		m2 := make(map[TestID]ResultID)
+		for c, d := range b {
+			m2[c] = d
+		}
+		m1[a] = m2
+	}
+	nu.ByRunTest = m1
+	return nu
+}
 
 func (rs *Results) Add(ru RunID, re ResultID, t TestID) {
 	if _, ok := rs.ByRunTest[ru]; !ok {
