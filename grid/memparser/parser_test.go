@@ -10,7 +10,7 @@ import (
 )
 
 func parse(t *testing.T, query string) Filterable {
-	pn, s := expr(parsec.NewScanner([]byte(query)))
+	pn, s := q(parsec.NewScanner([]byte(query)))
 	assert.True(t, s.Endof())
 	v, ok := pn.(Filterable)
 	assert.True(t, ok)
@@ -26,8 +26,8 @@ func TestName_single(t *testing.T) {
 }
 
 func TestName_multi(t *testing.T) {
-	v := parse(t, "/2dcontext/ blob")
-	a, ok := v.(*Or)
+	v := parse(t, "2dcontext andThis")
+	a, ok := v.(*And)
 	assert.True(t, ok)
 	assert.NotNil(t, a)
 	assert.Equal(t, 2, len(a.Parts))
@@ -37,8 +37,8 @@ func TestName_multi(t *testing.T) {
 	p2, ok := a.Parts[1].(*NameFragment)
 	assert.True(t, ok)
 	assert.NotNil(t, p2)
-	assert.Equal(t, NameFragment{"/2dcontext/"}, *p1)
-	assert.Equal(t, NameFragment{"blob"}, *p2)
+	assert.Equal(t, NameFragment{"2dcontext"}, *p1)
+	assert.Equal(t, NameFragment{"andThis"}, *p2)
 }
 
 func TestRun(t *testing.T) {
@@ -51,7 +51,7 @@ func TestRun(t *testing.T) {
 
 func TestMix(t *testing.T) {
 	v := parse(t, "_foo -43=TIMEOUT")
-	a, ok := v.(*Or)
+	a, ok := v.(*And)
 	assert.True(t, ok)
 	assert.NotNil(t, a)
 	assert.Equal(t, 2, len(a.Parts))
@@ -66,7 +66,7 @@ func TestMix(t *testing.T) {
 }
 
 func TestAnd_name(t *testing.T) {
-	v := parse(t, "a and b")
+	v := parse(t, "a and orStart")
 	a, ok := v.(*And)
 	assert.True(t, ok)
 	assert.NotNil(t, a)
@@ -78,7 +78,7 @@ func TestAnd_name(t *testing.T) {
 	assert.True(t, ok)
 	assert.NotNil(t, p2)
 	assert.Equal(t, NameFragment{"a"}, *p1)
-	assert.Equal(t, NameFragment{"b"}, *p2)
+	assert.Equal(t, NameFragment{"orStart"}, *p2)
 }
 
 func TestAnd_run(t *testing.T) {
@@ -130,7 +130,7 @@ func TestAmpersand_name(t *testing.T) {
 }
 
 func TestAmpersand_run(t *testing.T) {
-	v := parse(t, "-43=TIMEOUT & -42=PASS")
+	v := parse(t, "-43=TIMEOUT&-42=PASS")
 	a, ok := v.(*And)
 	assert.True(t, ok)
 	assert.NotNil(t, a)
@@ -163,14 +163,14 @@ func TestAmpersand_mixed(t *testing.T) {
 
 func TestOr_name(t *testing.T) {
 	v := parse(t, "a or b")
-	a, ok := v.(*Or)
+	o, ok := v.(*Or)
 	assert.True(t, ok)
-	assert.NotNil(t, a)
-	assert.Equal(t, 2, len(a.Parts))
-	p1, ok := a.Parts[0].(*NameFragment)
+	assert.NotNil(t, o)
+	assert.Equal(t, 2, len(o.Parts))
+	p1, ok := o.Parts[0].(*NameFragment)
 	assert.True(t, ok)
 	assert.NotNil(t, p1)
-	p2, ok := a.Parts[1].(*NameFragment)
+	p2, ok := o.Parts[1].(*NameFragment)
 	assert.True(t, ok)
 	assert.NotNil(t, p2)
 	assert.Equal(t, NameFragment{"a"}, *p1)
@@ -179,14 +179,14 @@ func TestOr_name(t *testing.T) {
 
 func TestOr_run(t *testing.T) {
 	v := parse(t, "-43=TIMEOUT or -42=PASS")
-	a, ok := v.(*Or)
+	o, ok := v.(*Or)
 	assert.True(t, ok)
-	assert.NotNil(t, a)
-	assert.Equal(t, 2, len(a.Parts))
-	p1, ok := a.Parts[0].(*ResultFragment)
+	assert.NotNil(t, o)
+	assert.Equal(t, 2, len(o.Parts))
+	p1, ok := o.Parts[0].(*ResultFragment)
 	assert.True(t, ok)
 	assert.NotNil(t, p1)
-	p2, ok := a.Parts[1].(*ResultFragment)
+	p2, ok := o.Parts[1].(*ResultFragment)
 	assert.True(t, ok)
 	assert.NotNil(t, p2)
 	assert.Equal(t, ResultFragment{-43, ResultOp{"EQ"}, mem.ResultID(shared.TestStatusValueFromString("TIMEOUT"))}, *p1)
@@ -195,14 +195,14 @@ func TestOr_run(t *testing.T) {
 
 func TestOr_mixed(t *testing.T) {
 	v := parse(t, "-42=PASS or a")
-	a, ok := v.(*Or)
+	o, ok := v.(*Or)
 	assert.True(t, ok)
-	assert.NotNil(t, a)
-	assert.Equal(t, 2, len(a.Parts))
-	p1, ok := a.Parts[0].(*ResultFragment)
+	assert.NotNil(t, o)
+	assert.Equal(t, 2, len(o.Parts))
+	p1, ok := o.Parts[0].(*ResultFragment)
 	assert.True(t, ok)
 	assert.NotNil(t, p1)
-	p2, ok := a.Parts[1].(*NameFragment)
+	p2, ok := o.Parts[1].(*NameFragment)
 	assert.True(t, ok)
 	assert.NotNil(t, p2)
 	assert.Equal(t, ResultFragment{-42, ResultOp{"EQ"}, mem.ResultID(shared.TestStatusValueFromString("PASS"))}, *p1)
@@ -210,8 +210,84 @@ func TestOr_mixed(t *testing.T) {
 }
 
 func TestVbar_name(t *testing.T) {
-	v := parse(t, "a | b")
-	a, ok := v.(*Or)
+	v := parse(t, "a|b")
+	o, ok := v.(*Or)
+	assert.True(t, ok)
+	assert.NotNil(t, o)
+	assert.Equal(t, 2, len(o.Parts))
+	p1, ok := o.Parts[0].(*NameFragment)
+	assert.True(t, ok)
+	assert.NotNil(t, p1)
+	p2, ok := o.Parts[1].(*NameFragment)
+	assert.True(t, ok)
+	assert.NotNil(t, p2)
+	assert.Equal(t, NameFragment{"a"}, *p1)
+	assert.Equal(t, NameFragment{"b"}, *p2)
+}
+
+func TestVbar_run(t *testing.T) {
+	v := parse(t, "-43=TIMEOUT | -42=PASS")
+	o, ok := v.(*Or)
+	assert.True(t, ok)
+	assert.NotNil(t, o)
+	assert.Equal(t, 2, len(o.Parts))
+	p1, ok := o.Parts[0].(*ResultFragment)
+	assert.True(t, ok)
+	assert.NotNil(t, p1)
+	p2, ok := o.Parts[1].(*ResultFragment)
+	assert.True(t, ok)
+	assert.NotNil(t, p2)
+	assert.Equal(t, ResultFragment{-43, ResultOp{"EQ"}, mem.ResultID(shared.TestStatusValueFromString("TIMEOUT"))}, *p1)
+	assert.Equal(t, ResultFragment{-42, ResultOp{"EQ"}, mem.ResultID(shared.TestStatusValueFromString("PASS"))}, *p2)
+}
+
+func TestVbar_mixed(t *testing.T) {
+	v := parse(t, "42=PASS | a")
+	o, ok := v.(*Or)
+	assert.True(t, ok)
+	assert.NotNil(t, o)
+	assert.Equal(t, 2, len(o.Parts))
+	p1, ok := o.Parts[0].(*ResultFragment)
+	assert.True(t, ok)
+	assert.NotNil(t, p1)
+	p2, ok := o.Parts[1].(*NameFragment)
+	assert.True(t, ok)
+	assert.NotNil(t, p2)
+	assert.Equal(t, ResultFragment{42, ResultOp{"EQ"}, mem.ResultID(shared.TestStatusValueFromString("PASS"))}, *p1)
+	assert.Equal(t, NameFragment{"a"}, *p2)
+}
+
+func TestAndOr_looseAnd(t *testing.T) {
+	v := parse(t, "a b or c")
+	a, ok := v.(*And)
+	assert.True(t, ok)
+	assert.NotNil(t, a)
+	assert.Equal(t, 2, len(a.Parts))
+	p1, ok := a.Parts[0].(*NameFragment)
+	assert.True(t, ok)
+	assert.NotNil(t, p1)
+	o, ok := a.Parts[1].(*Or)
+	assert.True(t, ok)
+	assert.NotNil(t, o)
+	assert.Equal(t, 2, len(o.Parts))
+	p2, ok := o.Parts[0].(*NameFragment)
+	assert.True(t, ok)
+	assert.NotNil(t, p2)
+	p3, ok := o.Parts[1].(*NameFragment)
+	assert.True(t, ok)
+	assert.NotNil(t, p3)
+	assert.Equal(t, NameFragment{"a"}, *p1)
+	assert.Equal(t, NameFragment{"b"}, *p2)
+	assert.Equal(t, NameFragment{"c"}, *p3)
+}
+
+func TestAndOr_tightAnd(t *testing.T) {
+	v := parse(t, "a and b or c")
+	o, ok := v.(*Or)
+	assert.True(t, ok)
+	assert.NotNil(t, o)
+	assert.Equal(t, 2, len(o.Parts))
+	a, ok := o.Parts[0].(*And)
 	assert.True(t, ok)
 	assert.NotNil(t, a)
 	assert.Equal(t, 2, len(a.Parts))
@@ -221,38 +297,54 @@ func TestVbar_name(t *testing.T) {
 	p2, ok := a.Parts[1].(*NameFragment)
 	assert.True(t, ok)
 	assert.NotNil(t, p2)
+	p3, ok := o.Parts[1].(*NameFragment)
+	assert.True(t, ok)
+	assert.NotNil(t, p3)
 	assert.Equal(t, NameFragment{"a"}, *p1)
 	assert.Equal(t, NameFragment{"b"}, *p2)
+	assert.Equal(t, NameFragment{"c"}, *p3)
 }
 
-func TestVbar_run(t *testing.T) {
-	v := parse(t, "-43=TIMEOUT | -42=PASS")
-	a, ok := v.(*Or)
+func TestAndOr_parens(t *testing.T) {
+	v := parse(t, "a and (b or c)")
+	a, ok := v.(*And)
 	assert.True(t, ok)
 	assert.NotNil(t, a)
 	assert.Equal(t, 2, len(a.Parts))
-	p1, ok := a.Parts[0].(*ResultFragment)
+	p1, ok := a.Parts[0].(*NameFragment)
 	assert.True(t, ok)
 	assert.NotNil(t, p1)
-	p2, ok := a.Parts[1].(*ResultFragment)
+	o, ok := a.Parts[1].(*Or)
+	assert.True(t, ok)
+	assert.NotNil(t, o)
+	assert.Equal(t, 2, len(o.Parts))
+	p2, ok := o.Parts[0].(*NameFragment)
 	assert.True(t, ok)
 	assert.NotNil(t, p2)
-	assert.Equal(t, ResultFragment{-43, ResultOp{"EQ"}, mem.ResultID(shared.TestStatusValueFromString("TIMEOUT"))}, *p1)
-	assert.Equal(t, ResultFragment{-42, ResultOp{"EQ"}, mem.ResultID(shared.TestStatusValueFromString("PASS"))}, *p2)
+	p3, ok := o.Parts[1].(*NameFragment)
+	assert.True(t, ok)
+	assert.NotNil(t, p3)
+	assert.Equal(t, NameFragment{"a"}, *p1)
+	assert.Equal(t, NameFragment{"b"}, *p2)
+	assert.Equal(t, NameFragment{"c"}, *p3)
 }
 
-func TestVbar_mixed(t *testing.T) {
-	v := parse(t, "-42=PASS | a")
-	a, ok := v.(*Or)
+func TestNot(t *testing.T) {
+	v := parse(t, "not a")
+	n, ok := v.(*Not)
 	assert.True(t, ok)
-	assert.NotNil(t, a)
-	assert.Equal(t, 2, len(a.Parts))
-	p1, ok := a.Parts[0].(*ResultFragment)
+	assert.NotNil(t, n)
+	p, ok := n.Part.(*NameFragment)
 	assert.True(t, ok)
-	assert.NotNil(t, p1)
-	p2, ok := a.Parts[1].(*NameFragment)
+	assert.Equal(t, NameFragment{"a"}, *p)
+}
+
+func TestBang(t *testing.T) {
+	v := parse(t, " ! a ")
+	n, ok := v.(*Not)
 	assert.True(t, ok)
-	assert.NotNil(t, p2)
-	assert.Equal(t, ResultFragment{-42, ResultOp{"EQ"}, mem.ResultID(shared.TestStatusValueFromString("PASS"))}, *p1)
-	assert.Equal(t, NameFragment{"a"}, *p2)
+	assert.NotNil(t, n)
+	p, ok := n.Part.(*NameFragment)
+	assert.True(t, ok)
+	assert.Equal(t, NameFragment{"a"}, *p)
 }

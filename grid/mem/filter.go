@@ -23,3 +23,9 @@ func Or(fs ...Filter) Filter {
 		return false
 	}
 }
+
+func Not(f Filter) Filter {
+	return func(ts *Tests, rs *Results, t TestID) bool {
+		return !f(ts, rs, t)
+	}
+}
