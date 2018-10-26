@@ -157,7 +157,7 @@ func init() {
 }
 
 func Parse(query string) (Filterable, error) {
-	pn, s := expr(parsec.NewScanner([]byte(query)))
+	pn, s := q(parsec.NewScanner([]byte(query)))
 	if !s.Endof() {
 		return nil, errors.New("Parse did not consume all input")
 	}

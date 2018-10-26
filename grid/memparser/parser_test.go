@@ -348,3 +348,7 @@ func TestBang(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, NameFragment{"a"}, *p)
 }
+
+func TestQ(t *testing.T) {
+	parse(t, "cssom (5818444842795008=PASS or 5818444842795008=OK) !(5096223207849984=PASS or 5096223207849984=OK)")
+}

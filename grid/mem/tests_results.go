@@ -3,6 +3,8 @@ package mem
 import (
 	"github.com/web-platform-tests/results-analysis/metrics"
 	"github.com/web-platform-tests/wpt.fyi/shared"
+
+	mapset "github.com/deckarep/golang-set"
 )
 
 type TestsResults struct {
@@ -12,6 +14,7 @@ type TestsResults struct {
 
 type TestResultIndex struct {
 	Shards []*TestsResults
+	Runs   mapset.Set
 }
 
 type NamedTest struct {
@@ -47,11 +50,12 @@ func NewIndex(n int) *TestResultIndex {
 			Results: NewResults(),
 		}
 	}
-	return &TestResultIndex{tr}
+	return &TestResultIndex{tr, mapset.NewSet()}
 }
 
 func (i *TestResultIndex) Copy() *TestResultIndex {
 	nu := &TestResultIndex{}
+	nu.Runs = i.Runs.Clone()
 	ss := make([]*TestsResults, len(i.Shards))
 	for j := range ss {
 		ss[j] = &TestsResults{
@@ -66,6 +70,7 @@ func (i *TestResultIndex) Copy() *TestResultIndex {
 func (i *TestResultIndex) WithRunResults(rrs ...RunResults) (*TestResultIndex, error) {
 	nu := i.Copy()
 	for _, rr := range rrs {
+		nu.Runs.Add(rr.RunID)
 		for _, r := range rr.Results {
 			err := nu.add(r.Test, nil, rr.RunID, ResultID(shared.TestStatusValueFromString(r.Status)))
 			if err != nil {
@@ -91,6 +96,10 @@ func (i *TestResultIndex) add(name string, subPtr *string, ru RunID, re ResultID
 	tr.Tests.Add(id, str)
 	tr.Results.Add(ru, re, id)
 	return nil
+}
+
+func (i *TestResultIndex) HasRun(ru RunID) bool {
+	return i.Runs.Contains(ru)
 }
 
 func (i *TestResultIndex) Query(f Filter) []TestID {

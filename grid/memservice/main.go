@@ -146,7 +146,12 @@ func qHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Malformed run_id query parameter", http.StatusBadRequest)
 			return
 		}
-		runIDs = append(runIDs, mem.RunID(id))
+		runID := mem.RunID(id)
+		if !idx.HasRun(runID) {
+			http.Error(w, fmt.Sprintf("Unknown run ID: %d", id), http.StatusBadRequest)
+			return
+		}
+		runIDs = append(runIDs, runID)
 	}
 
 	qStrs := r.URL.Query()["q"]
