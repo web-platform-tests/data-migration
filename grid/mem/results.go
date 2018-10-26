@@ -48,13 +48,6 @@ func (rs *Results) GetResult(ru RunID, t TestID) ResultID {
 	return re
 }
 
-func ResultFilter(ru RunID, re ResultID) Filter {
-	return func(ts *Tests, rs *Results, t TestID) bool {
-		byTest, ok := rs.ByRunTest[ru]
-		if !ok {
-			return false
-		}
-		result, ok := byTest[t]
-		return ok && result == re
-	}
+func ResultFilter(ru RunID, re ResultID) UnboundFilter {
+	return NewResultEQFilter(ru, re)
 }

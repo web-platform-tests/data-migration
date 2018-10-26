@@ -1,12 +1,15 @@
 package mem
 
 import (
-	"strings"
+	"fmt"
 
 	farm "github.com/dgryski/go-farm"
 )
 
-type TestID uint64
+type TestID struct {
+	TestID uint64
+	SubID  uint64
+}
 
 type Tests struct {
 	Tests map[TestID]string
@@ -31,25 +34,21 @@ func (ts *Tests) Add(id TestID, str string) {
 }
 
 func (ts *Tests) GetName(id TestID) string {
-	return strings.Split(ts.Tests[id], "\x00")[0]
+	return ts.Tests[id]
 }
 
-func TestFilter(q string) Filter {
-	return func(ts *Tests, rs *Results, t TestID) bool {
-		str, ok := ts.Tests[t]
-		if !ok {
-			return false
-		}
-		return strings.Contains(str, q)
-	}
+func TestFilter(q string) UnboundFilter {
+	return NewTestNameFilter(q)
 }
 
-func computeID(name string, subPtr *string) (TestID, string, error) {
-	var str string
+func computeID(name string, subPtr *string) (TestID, error) {
+	var s uint64
+	t := farm.Fingerprint64([]byte(name))
 	if subPtr != nil && *subPtr != "" {
-		str = name + "\x00" + *subPtr
-	} else {
-		str = name
+		s := farm.Fingerprint64([]byte(*subPtr))
+		if s == 0 {
+			return TestID{}, fmt.Errorf(`Subtest ID for string "%s" is 0`, *subPtr)
+		}
 	}
-	return TestID(farm.Fingerprint64([]byte(str))), str, nil
+	return TestID{t, s}, nil
 }

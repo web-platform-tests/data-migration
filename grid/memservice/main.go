@@ -10,7 +10,6 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/web-platform-tests/wpt.fyi/api/query"
@@ -173,68 +172,18 @@ func qHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Infof("Processing query: %v", fable)
 	t0 := time.Now()
-	ts := idx.Query(fable.ToFilter())
+	res := idx.Query(runIDs, fable.ToFilter())
 	log.Infof("Query %v processed in %v", fable, time.Now().Sub(t0))
 
-	log.Infof("Preparing results for %d tests", len(ts))
+	log.Infof("Preparing results for %d top-level tests", len(res))
 	t0 = time.Now()
-	var wg sync.WaitGroup
-	var names map[mem.TestID]string
-	var results map[mem.TestID][]mem.ResultID
-	var searchResults []query.SearchResult
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		names = idx.GetNames(ts)
-	}()
-	go func() {
-		defer wg.Done()
-		results = idx.GetResults(runIDs, ts)
-	}()
-	wg.Wait()
+	sort.Sort(query.ByName(res))
+	log.Infof("Prepared results for %d top-level tests in %v", len(res), time.Now().Sub(t0))
 
-	passes := make(map[string][]int)
-	totals := make(map[string][]int)
-	for _, t := range ts {
-		name := names[t]
-		ress := results[t]
-		if passes[name] == nil {
-			passes[name] = make([]int, len(results[t]))
-		}
-		if totals[name] == nil {
-			totals[name] = make([]int, len(results[t]))
-		}
-		for i, res := range ress {
-			if res == mem.ResultID(shared.TestStatusOK) || res == mem.ResultID(shared.TestStatusPass) {
-				passes[name][i]++
-			}
-			if res != mem.ResultID(shared.TestStatusUnknown) {
-				totals[name][i]++
-			}
-		}
-	}
-	searchResults = make([]query.SearchResult, 0, len(totals))
-	for name, ttls := range totals {
-		ps := passes[name]
-		statuses := make([]query.LegacySearchRunResult, 0, len(ttls))
-		for i := range ttls {
-			statuses = append(statuses, query.LegacySearchRunResult{
-				Passes: ps[i],
-				Total:  ttls[i],
-			})
-		}
-		searchResults = append(searchResults, query.SearchResult{
-			Test:         name,
-			LegacyStatus: statuses,
-		})
-	}
-	sort.Sort(query.ByName(searchResults))
-	log.Infof("Prepared results for %d tests in %v", len(ts), time.Now().Sub(t0))
-
+	log.Infof("Sending results for %d top-level tests", len(res))
 	t0 = time.Now()
-	log.Infof("Sending results for %d tests", len(ts))
 	data, err := json.Marshal(query.SearchResponse{
-		Results: searchResults,
+		Results: res,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -242,7 +191,15 @@ func qHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Write(data)
-	log.Infof("Sent results for %d tests in %v", len(ts), time.Now().Sub(t0))
+	log.Infof("Sent results for %d top-level tests in %v", len(res), time.Now().Sub(t0))
+}
+
+func handleFunc(p string, h func(w http.ResponseWriter, r *http.Request)) {
+	http.HandleFunc(p, func(w http.ResponseWriter, r *http.Request) {
+		t0 := time.Now()
+		h(w, r)
+		log.Infof("Handled %s in %v", p, time.Now().Sub(t0))
+	})
 }
 
 func loadInitialRuns() {
@@ -306,8 +263,8 @@ func init() {
 func main() {
 	go monitor()
 	log.Infof("Running with %d shards", runtime.NumCPU())
-	http.HandleFunc("/load-run", loadRunHandler)
-	http.HandleFunc("/q", qHandler)
+	handleFunc("/load-run", loadRunHandler)
+	handleFunc("/q", qHandler)
 
 	go loadInitialRuns()
 

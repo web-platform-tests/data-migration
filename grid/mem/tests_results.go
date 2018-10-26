@@ -2,6 +2,7 @@ package mem
 
 import (
 	"github.com/web-platform-tests/results-analysis/metrics"
+	"github.com/web-platform-tests/wpt.fyi/api/query"
 	"github.com/web-platform-tests/wpt.fyi/shared"
 
 	mapset "github.com/deckarep/golang-set"
@@ -32,14 +33,15 @@ type RunResults struct {
 	Results []*metrics.TestResults
 }
 
-func (tr *TestsResults) Execute(f Filter) []TestID {
-	res := make([]TestID, 0)
+func (tr *TestsResults) Execute(rus []RunID, uf UnboundFilter) []query.SearchResult {
+	f := uf.Bind(tr)
+	agg := NewTestRunAggregator(rus, tr.Tests, tr.Results)
 	for t := range tr.Tests.Tests {
-		if f(tr.Tests, tr.Results, t) {
-			res = append(res, t)
+		if f.Exec(t) {
+			agg.Add(t)
 		}
 	}
-	return res
+	return agg.Done()
 }
 
 func NewIndex(n int) *TestResultIndex {
@@ -88,12 +90,12 @@ func (i *TestResultIndex) WithRunResults(rrs ...RunResults) (*TestResultIndex, e
 }
 
 func (i *TestResultIndex) add(name string, subPtr *string, ru RunID, re ResultID) error {
-	id, str, err := computeID(name, subPtr)
+	id, err := computeID(name, subPtr)
 	if err != nil {
 		return err
 	}
 	tr := i.Shards[i.getShardIdx(id)]
-	tr.Tests.Add(id, str)
+	tr.Tests.Add(id, name)
 	tr.Results.Add(ru, re, id)
 	return nil
 }
@@ -102,16 +104,17 @@ func (i *TestResultIndex) HasRun(ru RunID) bool {
 	return i.Runs.Contains(ru)
 }
 
-func (i *TestResultIndex) Query(f Filter) []TestID {
-	c := make(chan []TestID, len(i.Shards))
+func (i *TestResultIndex) Query(rus []RunID, uf UnboundFilter) []query.SearchResult {
+	c := make(chan []query.SearchResult, len(i.Shards))
 	for i, tr := range i.Shards {
 		go func(n int, tr *TestsResults) {
-			c <- tr.Execute(f)
+			c <- tr.Execute(rus, uf)
 		}(i, tr)
 	}
-	res := make([]TestID, 0)
-	for n := 0; n < len(i.Shards); n++ {
-		res = append(res, <-c...)
+	res := make([]query.SearchResult, 0)
+	for range i.Shards {
+		next := <-c
+		res = append(res, next...)
 	}
 	return res
 }
@@ -206,5 +209,5 @@ func (i *TestResultIndex) GetResults(rus []RunID, ids []TestID) map[TestID][]Res
 }
 
 func (i *TestResultIndex) getShardIdx(id TestID) int {
-	return int(uint64(id) % uint64(len(i.Shards)))
+	return int(uint64(id.TestID) % uint64(len(i.Shards)))
 }
