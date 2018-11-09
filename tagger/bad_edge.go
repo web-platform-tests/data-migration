@@ -46,7 +46,7 @@ func (e conditionUnsatisfied) Error() string {
 }
 
 func condition(run *shared.TestRun) bool {
-	if run.BrowserName == "edge" {
+	if run.BrowserName != "edge" {
 		return false
 	}
 	return shared.StringSliceContains(badRevisions, run.Revision)
