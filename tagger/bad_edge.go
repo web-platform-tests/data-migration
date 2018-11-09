@@ -68,7 +68,9 @@ func main() {
 		panic(err)
 	}
 
-	query := datastore.NewQuery("TestRun").KeysOnly()
+	query := datastore.NewQuery("TestRun").
+		Filter("BrowserName =", "edge").
+		KeysOnly()
 
 	for t := dsClient.Run(ctx, query); ; {
 		key, err := t.Next(nil)
