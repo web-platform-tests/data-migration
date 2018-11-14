@@ -14,6 +14,7 @@ var (
 	projectID = flag.String("project", "wptdashboard-staging", "Google Cloud project")
 )
 
+// ConditionUnsatisfied is a non-fatal error when a run does not need to be processed.
 type ConditionUnsatisfied struct{}
 
 func (e ConditionUnsatisfied) Error() string {
@@ -37,7 +38,7 @@ func MigrateData(runsProcessor Runs) {
 		panic(err)
 	}
 
-	query := datastore.NewQuery("TestRun").KeysOnly()
+	query := datastore.NewQuery("TestRun").Order("-TimeStart").KeysOnly()
 
 	for t := dsClient.Run(ctx, query); ; {
 		key, err := t.Next(nil)
