@@ -67,20 +67,22 @@ func main() {
 			if done.Contains("/" + filePath) {
 				continue
 			}
-			file, err := os.Open(path.Join(dir, "../../wpt/", filePath))
-			if err != nil {
-				log.Printf("Failed to open %s: %s", filePath, err.Error())
-				continue
-			}
-			defer file.Close()
+			go func(filePath string) {
+				file, err := os.Open(path.Join(dir, "../../wpt/", filePath))
+				if err != nil {
+					log.Printf("Failed to open %s: %s", filePath, err.Error())
+					return
+				}
+				defer file.Close()
 
-			data, _ := ioutil.ReadAll(file)
-			_, err = index.Put(remoteCtx, "/"+filePath, &TestContent{search.HTML(data)})
-			if err != nil {
-				panic(err)
-			}
-
-			log.Printf("/%s : %v bytes", filePath, len(data))
+				data, _ := ioutil.ReadAll(file)
+				_, err = index.Put(remoteCtx, "/"+filePath, &TestContent{search.HTML(data)})
+				if err != nil {
+					log.Printf("ERROR: %s", err.Error())
+				} else {
+					log.Printf("/%s : %v bytes", filePath, len(data))
+				}
+			}(filePath)
 		}
 	}
 }
