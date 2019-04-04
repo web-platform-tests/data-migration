@@ -7,7 +7,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/deckarep/golang-set"
+	mapset "github.com/deckarep/golang-set"
 
 	"cloud.google.com/go/datastore"
 
@@ -19,8 +19,22 @@ type masterLabeller struct {
 	AllMasterSHAs mapset.Set
 }
 
+func isKnownUploader(labels mapset.Set) bool {
+	uploaders := []string{"azure", "buildbot", "taskcluster"}
+	for _, u := range uploaders {
+		if labels.Contains(u) {
+			return true
+		}
+	}
+	return false
+}
+
 func (m masterLabeller) ShouldProcessRun(run *shared.TestRun) bool {
-	return !run.LabelsSet().Contains("master") && m.AllMasterSHAs.Contains(run.Revision)
+	return !run.LabelsSet().Contains("master") &&
+		!run.LabelsSet().Contains("pr_base") &&
+		!run.LabelsSet().Contains("pr_head") &&
+		isKnownUploader(run.LabelsSet()) &&
+		m.AllMasterSHAs.Contains(run.Revision)
 }
 
 func (m masterLabeller) ProcessRun(tx *datastore.Transaction, key *datastore.Key, run *shared.TestRun) error {
@@ -32,7 +46,7 @@ func (m masterLabeller) ProcessRun(tx *datastore.Transaction, key *datastore.Key
 func main() {
 	cmd := exec.Command("git", "rev-list", "origin/master")
 	dir, err := os.Getwd()
-	cmd.Dir = path.Join(dir, "../wpt")
+	cmd.Dir = path.Join(dir, "../../wpt")
 	bytes, err := cmd.Output()
 	if err != nil {
 		log.Fatalf("Failed to scrape revisions: %s", err.Error())
