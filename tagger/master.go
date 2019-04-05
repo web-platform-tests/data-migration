@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path"
 	"strings"
+	"time"
 
 	mapset "github.com/deckarep/golang-set"
 
@@ -19,10 +20,9 @@ type masterLabeller struct {
 	AllMasterSHAs mapset.Set
 }
 
-func isKnownUploader(labels mapset.Set) bool {
-	uploaders := []string{"azure", "buildbot", "taskcluster"}
-	for _, u := range uploaders {
-		if labels.Contains(u) {
+func hasAny(set mapset.Set, known []string) bool {
+	for _, i := range known {
+		if set.Contains(i) {
 			return true
 		}
 	}
@@ -30,10 +30,9 @@ func isKnownUploader(labels mapset.Set) bool {
 }
 
 func (m masterLabeller) ShouldProcessRun(run *shared.TestRun) bool {
-	return !run.LabelsSet().Contains("master") &&
-		!run.LabelsSet().Contains("pr_base") &&
-		!run.LabelsSet().Contains("pr_head") &&
-		isKnownUploader(run.LabelsSet()) &&
+	return !hasAny(run.LabelsSet(), []string{"master", "pr_base", "pr_head"}) &&
+		hasAny(run.LabelsSet(), []string{"azure", "taskcluster", "buildbot"}) &&
+		run.TimeEnd.Sub(run.TimeStart) > time.Minute*10 &&
 		m.AllMasterSHAs.Contains(run.Revision)
 }
 
