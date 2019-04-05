@@ -11,6 +11,7 @@ import (
 )
 
 var (
+	dryRun    = flag.Bool("dry-run", false, "Only print out runs that would be affected")
 	projectID = flag.String("project", "wptdashboard-staging", "Google Cloud project")
 )
 
@@ -30,6 +31,9 @@ func (e ConditionUnsatisfied) Error() string {
 // }
 func MigrateData(runsProcessor Runs) {
 	flag.Parse()
+	if *dryRun {
+		fmt.Println("Dry running; data will NOT be modified...")
+	}
 
 	ctx := context.Background()
 
@@ -55,6 +59,9 @@ func MigrateData(runsProcessor Runs) {
 				return err
 			}
 			if runsProcessor.ShouldProcessRun(&run) {
+				if *dryRun {
+					return nil
+				}
 				return runsProcessor.ProcessRun(tx, key, &run)
 			}
 			return ConditionUnsatisfied{}
