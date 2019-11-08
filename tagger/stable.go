@@ -10,6 +10,8 @@ import (
 	"github.com/web-platform-tests/wpt.fyi/shared"
 )
 
+// stableLabeller ensures that stable runs are labelled 'stable' (and not
+// 'experimental'), based on the browser name and version.
 type stableLabeller struct{}
 
 func (e stableLabeller) ShouldProcessRun(run *shared.TestRun) bool {

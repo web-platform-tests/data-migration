@@ -16,6 +16,9 @@ import (
 	"github.com/web-platform-tests/wpt.fyi/shared"
 )
 
+// masterLabeller attempts to fix up runs that are missing the 'master' label.
+// Due to missing data in older runs, it uses a few heuristics to guess at what
+// may be a master run.
 type masterLabeller struct {
 	AllMasterSHAs mapset.Set
 }

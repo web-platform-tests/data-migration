@@ -11,6 +11,7 @@ import (
 
 var channels = []string{"stable", "release", "beta", "dev", "canary", "nightly", "preview"}
 
+// channelLabeller fixes channel labels based on the browser version metadata.
 type channelLabeller struct{}
 
 func (e channelLabeller) ShouldProcessRun(run *shared.TestRun) bool {
