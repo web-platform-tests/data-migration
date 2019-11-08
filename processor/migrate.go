@@ -86,4 +86,5 @@ func MigrateData(runsProcessor Runs) {
 		wg.Add(1)
 		go ProcessRun(ctx, runsProcessor, dsClient, key, &wg)
 	}
+	wg.Wait()
 }
