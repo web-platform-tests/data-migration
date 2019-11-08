@@ -9,7 +9,7 @@ import (
 	"github.com/web-platform-tests/wpt.fyi/shared"
 )
 
-var channels = []string{"stable", "release", "beta", "dev", "nightly", "preview"}
+var channels = []string{"stable", "release", "beta", "dev", "canary", "nightly", "preview"}
 
 type channelLabeller struct{}
 
