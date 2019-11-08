@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"sync"
 
 	"cloud.google.com/go/datastore"
 	"github.com/web-platform-tests/wpt.fyi/shared"
@@ -20,6 +21,34 @@ type ConditionUnsatisfied struct{}
 
 func (e ConditionUnsatisfied) Error() string {
 	return "Condition not satisfied"
+}
+
+func ProcessRun(ctx context.Context, runsProcessor Runs, dsClient *datastore.Client, key *datastore.Key, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	var run shared.TestRun
+	_, err := dsClient.RunInTransaction(ctx, func(tx *datastore.Transaction) error {
+		err := tx.Get(key, &run)
+		if err != nil {
+			return err
+		}
+		if runsProcessor.ShouldProcessRun(&run) {
+			if *dryRun {
+				return nil
+			}
+			return runsProcessor.ProcessRun(tx, key, &run)
+		}
+		return ConditionUnsatisfied{}
+	})
+	if err != nil {
+		_, ok := err.(ConditionUnsatisfied)
+		if !ok {
+			panic(err)
+		} else {
+			return
+		}
+	}
+	fmt.Printf("Processed TestRun %s (%s %s)\n", key.String(), run.BrowserName, run.BrowserVersion)
 }
 
 // MigrateData handles all the loading and transactions across the full
@@ -44,6 +73,7 @@ func MigrateData(runsProcessor Runs) {
 
 	query := datastore.NewQuery("TestRun").Order("-TimeStart").KeysOnly()
 
+	var wg sync.WaitGroup
 	for t := dsClient.Run(ctx, query); ; {
 		key, err := t.Next(nil)
 		if err == iterator.Done {
@@ -52,28 +82,9 @@ func MigrateData(runsProcessor Runs) {
 		if err != nil {
 			panic(err)
 		}
-		var run shared.TestRun
-		_, err = dsClient.RunInTransaction(ctx, func(tx *datastore.Transaction) error {
-			err := tx.Get(key, &run)
-			if err != nil {
-				return err
-			}
-			if runsProcessor.ShouldProcessRun(&run) {
-				if *dryRun {
-					return nil
-				}
-				return runsProcessor.ProcessRun(tx, key, &run)
-			}
-			return ConditionUnsatisfied{}
-		})
-		if err != nil {
-			_, ok := err.(ConditionUnsatisfied)
-			if !ok {
-				panic(err)
-			} else {
-				continue
-			}
-		}
-		fmt.Printf("Processed TestRun %s (%s %s)\n", key.String(), run.BrowserName, run.BrowserVersion)
+
+		wg.Add(1)
+		go ProcessRun(ctx, runsProcessor, dsClient, key, &wg)
 	}
+	wg.Wait()
 }
