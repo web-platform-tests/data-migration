@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"sync"
 
 	"cloud.google.com/go/datastore"
 	"github.com/web-platform-tests/wpt.fyi/shared"
@@ -22,7 +23,9 @@ func (e ConditionUnsatisfied) Error() string {
 	return "Condition not satisfied"
 }
 
-func ProcessRun(ctx context.Context, runsProcessor Runs, dsClient *datastore.Client, key *datastore.Key) {
+func ProcessRun(ctx context.Context, runsProcessor Runs, dsClient *datastore.Client, key *datastore.Key, wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	var run shared.TestRun
 	_, err := dsClient.RunInTransaction(ctx, func(tx *datastore.Transaction) error {
 		err := tx.Get(key, &run)
@@ -70,6 +73,7 @@ func MigrateData(runsProcessor Runs) {
 
 	query := datastore.NewQuery("TestRun").Order("-TimeStart").KeysOnly()
 
+	var wg sync.WaitGroup
 	for t := dsClient.Run(ctx, query); ; {
 		key, err := t.Next(nil)
 		if err == iterator.Done {
@@ -79,6 +83,7 @@ func MigrateData(runsProcessor Runs) {
 			panic(err)
 		}
 
-		go ProcessRun(ctx, runsProcessor, dsClient, key)
+		wg.Add(1)
+		go ProcessRun(ctx, runsProcessor, dsClient, key, &wg)
 	}
 }
